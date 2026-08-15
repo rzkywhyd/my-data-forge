@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import type {
   DataTableQuery,
   DataTableResponse,
@@ -25,7 +25,7 @@ export default function DataTable<T>({ columns, fetchData }: Props<T>) {
     page,
     pageSize,
     search,
-    filters,
+    // filters,
     setPage,
     setPageSize,
     setSearch,
