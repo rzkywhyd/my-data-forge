@@ -1,23 +1,3 @@
-// import DynamicTable from "@/features/dynamic-table/components/DynamicTable";
-
-// export default function PersonalPage() {
-//   const ENTITY_ID = 2;
-//   // 👈 HARD CODE DI SINI
-//   return (
-//     <div className="p-4 space-y-6">
-//       <div>
-//         {" "}
-//         <h1 className="text-xl font-semibold">Personal Data Viewer</h1>{" "}
-//         <p className="text-sm text-gray-500">
-//           {" "}
-//           Showing data for entity ID: {ENTITY_ID}{" "}
-//         </p>{" "}
-//       </div>{" "}
-//       {/* TABLE */} <DynamicTable entityId={ENTITY_ID} />{" "}
-//     </div>
-//   );
-// }
-
 import { useState } from "react";
 import { Settings } from "lucide-react";
 
@@ -26,6 +6,7 @@ import ColumnSettingModal from "@/features/dynamic-table/components/ColumnSettin
 
 export default function PersonalPage() {
   const ENTITY_ID = 2;
+  const ENTITY_ID_Column = "2";
 
   const [openColumnSetting, setOpenColumnSetting] = useState(false);
 
@@ -55,7 +36,10 @@ export default function PersonalPage() {
 
       {/* Modal */}
       {openColumnSetting && (
-        <ColumnSettingModal onClose={() => setOpenColumnSetting(false)} />
+        <ColumnSettingModal
+          entityId={ENTITY_ID_Column}
+          onClose={() => setOpenColumnSetting(false)}
+        />
       )}
     </div>
   );
