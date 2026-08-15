@@ -23,7 +23,7 @@ export default function MainLayout() {
       return;
     }
 
-    fetch("http://localhost:3000/api/menus", {
+    fetch(`${import.meta.env.VITE_API_URL}/api/menus`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
