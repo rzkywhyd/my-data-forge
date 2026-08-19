@@ -115,7 +115,7 @@ export default function DynamicTable({ entityId }: Props) {
   // RENDER
   // =========================
   return (
-    <div className="ag-theme-alpine h-[600px] w-full">
+    <div className="ag-theme-alpine h-150 w-full">
       <AgGridReact
         rowModelType="infinite"
         cacheBlockSize={100}
