@@ -23,7 +23,7 @@ export default function MainLayout() {
       return;
     }
 
-    fetch(`${import.meta.env.VITE_API_URL}/api/menus`, {
+    fetch(`${import.meta.env.VITE_API_URL}/menus`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },

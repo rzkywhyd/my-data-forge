@@ -11,7 +11,6 @@ export type ColumnConfig = {
   display_order?: number;
 };
 
-
 export type VisibilityPerUserResponse = {
   columns: ColumnConfig[];
 };
@@ -20,11 +19,11 @@ export type VisibilityPerUserResponse = {
 export const visibilityPerUserService = {
 
   getColumns: async (
-    entityId: string,
+    entityId: number,
   ): Promise<VisibilityPerUserResponse> => {
 
     const res = await api.post(
-      "/visibilityPerUser",
+      `personal/${entityId}/columns`,
       {
         entityId,
       },
@@ -35,12 +34,12 @@ export const visibilityPerUserService = {
 
 
   saveColumns: async (
-    entityId: string,
+    entityId: number,
     columns: ColumnConfig[],
   ) => {
 
     const res = await api.post(
-      "/visibilityPerUser/save",
+      `personal/${entityId}/save`,
       {
         entityId,
         columns,

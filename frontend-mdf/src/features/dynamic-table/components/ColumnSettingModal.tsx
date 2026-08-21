@@ -5,7 +5,7 @@ import {
 } from "../services/visibilityPerUserService";
 
 type Props = {
-  entityId: string;
+  entityId: number;
   onClose: () => void;
   onSave?: (columns: ColumnConfig[]) => void;
 };
