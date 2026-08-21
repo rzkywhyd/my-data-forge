@@ -2,11 +2,7 @@ function buildWhereQuery({ fixedFilters, roleFilters, uiFilters }) {
   let where = "WHERE 1=1";
   let params = [];
 
-  const allFilters = [
-    ...fixedFilters,
-    ...roleFilters,
-    ...uiFilters,
-  ];
+  const allFilters = [...fixedFilters, ...roleFilters, ...uiFilters];
 
   for (const f of allFilters) {
     if (!f.field || !f.operator) continue;

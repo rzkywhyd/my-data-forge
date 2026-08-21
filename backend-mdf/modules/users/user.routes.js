@@ -26,7 +26,7 @@ router.get("/", auth, async (req, res) => {
         AND c.is_visible = 1
       ORDER BY c.display_order
       `,
-      [entity_id]
+      [entity_id],
     );
 
     /**

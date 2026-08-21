@@ -19,18 +19,14 @@ export type VisibilityPerUserResponse = {
 export const visibilityPerUserService = {
 
   getColumns: async (
-    entityId: number,
-  ): Promise<VisibilityPerUserResponse> => {
-
-    const res = await api.post(
-      `personal/${entityId}/columns`,
-      {
-        entityId,
-      },
-    );
-
-    return res.data;
-  },
+  entityId: number,
+      ): Promise<VisibilityPerUserResponse> => {
+  const res = await api.get(
+    `/personal/${entityId}/column_visibility_by_user`,
+  );
+ 
+  return res.data ;
+},
 
 
   saveColumns: async (
@@ -39,7 +35,7 @@ export const visibilityPerUserService = {
   ) => {
 
     const res = await api.post(
-      `personal/${entityId}/save`,
+      `personal/${entityId}/save_column_visibility_by_user`,
       {
         entityId,
         columns,

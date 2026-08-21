@@ -1,4 +1,3 @@
-
 const express = require("express");
 const router = express.Router();
 const db = require("../../config/db");
@@ -7,7 +6,7 @@ const auth = require("../../middleware/auth");
 const {
   applyFixedFilters,
   applyDefaultFilters,
-  applyUserFilters
+  applyUserFilters,
 } = require("../dynamic-table/filterEngine");
 
 // =========================
@@ -18,7 +17,7 @@ async function getDbFilters(entityId) {
     `SELECT field_name, operator, value, filter_type
      FROM mdf_entity_filters
      WHERE entity_id = ?`,
-    [entityId]
+    [entityId],
   );
 
   return rows || [];
@@ -33,10 +32,10 @@ async function getAllowedFields(entityId) {
      FROM mdf_entity_table_columns c
      JOIN mdf_entity_fields f ON f.field_id = c.field_id
      WHERE c.entity_id = ?`,
-    [entityId]
+    [entityId],
   );
 
-  return new Set((rows || []).map(r => r.field_name));
+  return new Set((rows || []).map((r) => r.field_name));
 }
 
 // =========================
@@ -50,10 +49,10 @@ router.post("/", auth, async (req, res) => {
     startRow = 0,
     endRow = 100,
     sortModel = [],
-    filterModel = {}
+    filterModel = {},
   } = req.body;
 
-  const conn = await db.getConnection(); 
+  const conn = await db.getConnection();
 
   try {
     // =========================
@@ -61,7 +60,7 @@ router.post("/", auth, async (req, res) => {
     // =========================
     const [entity] = await conn.query(
       `SELECT table_name FROM mdf_entities WHERE entity_id = ?`,
-      [entityId]
+      [entityId],
     );
 
     if (!entity.length) {
@@ -85,15 +84,15 @@ router.post("/", auth, async (req, res) => {
       WHERE c.entity_id = ?
       ORDER BY c.display_order ASC
       `,
-      [entityId]
+      [entityId],
     );
 
     const safeColumns = Array.isArray(columns) ? columns : [];
 
-    const allowed = new Set(safeColumns.map(c => c.field_name));
+    const allowed = new Set(safeColumns.map((c) => c.field_name));
 
     const columnList = safeColumns.length
-      ? safeColumns.map(c => `\`${c.field_name}\``).join(",")
+      ? safeColumns.map((c) => `\`${c.field_name}\``).join(",")
       : "*";
 
     // =========================
@@ -110,10 +109,7 @@ router.post("/", auth, async (req, res) => {
     applyDefaultFilters(dbFilters, allowed, userFilterMap, where, params);
     applyUserFilters(filterModel, allowed, where, params);
 
-
-    const whereSQL = where.length
-      ? "WHERE " + where.join(" AND ")
-      : "";
+    const whereSQL = where.length ? "WHERE " + where.join(" AND ") : "";
 
     console.log("WHERE CLAUSE:", whereSQL, params);
 
@@ -124,10 +120,8 @@ router.post("/", auth, async (req, res) => {
 
     if (Array.isArray(sortModel) && sortModel.length) {
       const sort = sortModel
-        .filter(s => allowed.has(s.colId))
-        .map(
-          s => `\`${s.colId}\` ${s.sort === "asc" ? "ASC" : "DESC"}`
-        );
+        .filter((s) => allowed.has(s.colId))
+        .map((s) => `\`${s.colId}\` ${s.sort === "asc" ? "ASC" : "DESC"}`);
 
       if (sort.length) {
         orderSQL = "ORDER BY " + sort.join(",");
@@ -150,7 +144,7 @@ router.post("/", auth, async (req, res) => {
       ${orderSQL}
       LIMIT ?, ?
       `,
-      [...params, startRow, limit]
+      [...params, startRow, limit],
     );
 
     // =========================
@@ -162,7 +156,7 @@ router.post("/", auth, async (req, res) => {
       FROM \`${tableName}\`
       ${whereSQL}
       `,
-      params
+      params,
     );
 
     // =========================
@@ -172,9 +166,8 @@ router.post("/", auth, async (req, res) => {
       columns: safeColumns,
       rows,
       total: count?.[0]?.total || 0,
-      defaultFilters: dbFilters.filter(f => f.filter_type === "default")
+      defaultFilters: dbFilters.filter((f) => f.filter_type === "default"),
     });
-
   } catch (err) {
     console.error("PERSONAL API ERROR:", err);
     res.status(500).json({ message: "Query error" });
@@ -183,200 +176,12 @@ router.post("/", auth, async (req, res) => {
   }
 });
 
-// ========================= 
-// DISTINCT API
-// =========================
-// router.post("/distinct", auth, async (req, res) => {
-//   try {
-//     const { entityId, field, filterModel = {} } = req.body;
-
-//     if (!field || typeof field !== "string") {
-//       return res.status(400).json({ error: "Invalid field" });
-//     }
-
-//     const safeField = field.replace(/[^a-zA-Z0-9_]/g, "");
-
-//     const dbFilters = await getDbFilters(entityId);
-//     const allowed = await getAllowedFields(entityId);
-
-//     const where = [];
-//     const params = [];
-
-//     const userFilterMap = new Set(Object.keys(filterModel || {}));
-
-//     applyFixedFilters(dbFilters, allowed, where, params);
-//     // applyDefaultFilters(dbFilters, allowed, userFilterMap, where, params);
-//     applyUserFilters(filterModel, allowed, where, params);
-
-//     const whereSQL = where.length
-//       ? `WHERE ${where.join(" AND ")}`
-//       : "";
-
-//     // ⚠️ IMPORTANT: pakai table dynamic
-//     const [entity] = await db.query(
-//       `SELECT table_name FROM mdf_entities WHERE entity_id = ?`,
-//       [entityId]
-//     );
-
-//     const tableName = entity?.[0]?.table_name;
-
-//     if (!tableName) {
-//       return res.status(404).json({ error: "Entity not found" });
-//     }
-
-//     const sql = `
-//       SELECT DISTINCT \`${safeField}\`
-//       FROM \`${tableName}\`
-//       ${whereSQL}
-//       ORDER BY \`${safeField}\` ASC
-//     `;
-
-//     const [rows] = await db.query(sql, params);
-
-//     res.json(rows.map(r => r[safeField]));
-
-//   } catch (err) {
-//     console.error("DISTINCT ERROR:", err);
-//     res.status(500).json({ error: "Internal Server Error" });
-//   }
-// });
-// router.post("/distinct", auth, async (req, res) => {
-//   try {
-//     const {
-//       entityId,
-//       field,
-//       filterModel = {},
-//     } = req.body;
-
-//     if (!field || typeof field !== "string") {
-//       return res
-//         .status(400)
-//         .json({ error: "Invalid field" });
-//     }
-
-//     const safeField = field.replace(
-//       /[^a-zA-Z0-9_]/g,
-//       "",
-//     );
-
-//     // =========================
-//     // TABLE
-//     // =========================
-//     const [entity] = await db.query(
-//       `
-//       SELECT table_name
-//       FROM mdf_entities
-//       WHERE entity_id = ?
-//       `,
-//       [entityId],
-//     );
-
-//     const tableName =
-//       entity?.[0]?.table_name;
-
-//     if (!tableName) {
-//       return res
-//         .status(404)
-//         .json({ error: "Entity not found" });
-//     }
-
-//     // =========================
-//     // FILTER CONFIG
-//     // =========================
-//     const dbFilters =
-//       await getDbFilters(entityId);
-
-//     const allowed =
-//       await getAllowedFields(entityId);
-
-//     const where = [];
-//     const params = [];
-
-//     const userFilterMap = new Set(
-//       Object.keys(filterModel || {}),
-//     );
-
-//     // =========================
-//     // FIXED FILTERS
-//     // =========================
-//     applyFixedFilters(
-//       dbFilters,
-//       allowed,
-//       where,
-//       params,
-//     );
-
-//     // =========================
-//     // DEFAULT FILTERS
-//     // =========================
-//     applyDefaultFilters(
-//       dbFilters,
-//       allowed,
-//       userFilterMap,
-//       where,
-//       params,
-//     );
-
-//     // =========================
-//     // USER FILTERS
-//     // =========================
-//     applyUserFilters(
-//       filterModel,
-//       allowed,
-//       where,
-//       params,
-//     );
-
-//     const whereSQL = where.length
-//       ? `WHERE ${where.join(" AND ")}`
-//       : "";
-
-//     // =========================
-//     // DISTINCT QUERY
-//     // =========================
-//     const sql = `
-//       SELECT DISTINCT \`${safeField}\`
-//       FROM \`${tableName}\`
-//       ${whereSQL}
-//       ORDER BY \`${safeField}\` ASC
-//     `;
-
-//     const [rows] = await db.query(
-//       sql,
-//       params,
-//     );
-
-//     res.json(
-//       rows
-//         .map((r) => r[safeField])
-//         .filter(
-//           (v) =>
-//             v !== null &&
-//             v !== undefined,
-//         ),
-//     );
-//   } catch (err) {
-//     console.error(
-//       "DISTINCT ERROR:",
-//       err,
-//     );
-
-//     res.status(500).json({
-//       error: "Internal Server Error",
-//     });
-//   }
-// });
 // =========================
 // DISTINCT API
 // =========================
 router.post("/distinct", auth, async (req, res) => {
   try {
-    const {
-      entityId,
-      field,
-      currentField,
-      filterModel = {},
-    } = req.body;
+    const { entityId, field, currentField, filterModel = {} } = req.body;
 
     if (!field || typeof field !== "string") {
       return res.status(400).json({
@@ -387,10 +192,7 @@ router.post("/distinct", auth, async (req, res) => {
     // =========================
     // SAFE FIELD
     // =========================
-    const safeField = field.replace(
-      /[^a-zA-Z0-9_]/g,
-      "",
-    );
+    const safeField = field.replace(/[^a-zA-Z0-9_]/g, "");
 
     // =========================
     // TABLE
@@ -404,8 +206,7 @@ router.post("/distinct", auth, async (req, res) => {
       [entityId],
     );
 
-    const tableName =
-      entity?.[0]?.table_name;
+    const tableName = entity?.[0]?.table_name;
 
     if (!tableName) {
       return res.status(404).json({
@@ -416,28 +217,19 @@ router.post("/distinct", auth, async (req, res) => {
     // =========================
     // FILTER CONFIG
     // =========================
-    const dbFilters =
-      await getDbFilters(entityId);
+    const dbFilters = await getDbFilters(entityId);
 
-    const allowed =
-      await getAllowedFields(entityId);
+    const allowed = await getAllowedFields(entityId);
 
     const where = [];
     const params = [];
 
-    const userFilterMap = new Set(
-      Object.keys(filterModel || {}),
-    );
+    const userFilterMap = new Set(Object.keys(filterModel || {}));
 
     // =========================
     // FIXED FILTERS
     // =========================
-    applyFixedFilters(
-      dbFilters,
-      allowed,
-      where,
-      params,
-    );
+    applyFixedFilters(dbFilters, allowed, where, params);
 
     // =========================
     // DEFAULT FILTERS
@@ -445,17 +237,13 @@ router.post("/distinct", auth, async (req, res) => {
     // current field default filter
     // should NOT restrict distinct list
     // =========================
-    const filteredDefaultFilters =
-      dbFilters.filter((f) => {
-        if (
-          f.filter_type === "default" &&
-          f.field_name === currentField
-        ) {
-          return false;
-        }
+    const filteredDefaultFilters = dbFilters.filter((f) => {
+      if (f.filter_type === "default" && f.field_name === currentField) {
+        return false;
+      }
 
-        return true;
-      });
+      return true;
+    });
 
     applyDefaultFilters(
       filteredDefaultFilters,
@@ -471,19 +259,12 @@ router.post("/distinct", auth, async (req, res) => {
     // current field already removed
     // from FE
     // =========================
-    applyUserFilters(
-      filterModel,
-      allowed,
-      where,
-      params,
-    );
+    applyUserFilters(filterModel, allowed, where, params);
 
     // =========================
     // WHERE SQL
     // =========================
-    const whereSQL = where.length
-      ? `WHERE ${where.join(" AND ")}`
-      : "";
+    const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
     // =========================
     // DISTINCT QUERY
@@ -498,10 +279,7 @@ router.post("/distinct", auth, async (req, res) => {
     console.log("DISTINCT SQL:", sql);
     console.log("DISTINCT PARAMS:", params);
 
-    const [rows] = await db.query(
-      sql,
-      params,
-    );
+    const [rows] = await db.query(sql, params);
 
     // =========================
     // RESPONSE
@@ -509,17 +287,10 @@ router.post("/distinct", auth, async (req, res) => {
     res.json(
       rows
         .map((r) => r[safeField])
-        .filter(
-          (v) =>
-            v !== null &&
-            v !== undefined,
-        ),
+        .filter((v) => v !== null && v !== undefined),
     );
   } catch (err) {
-    console.error(
-      "DISTINCT ERROR:",
-      err,
-    );
+    console.error("DISTINCT ERROR:", err);
 
     res.status(500).json({
       error: "Internal Server Error",
@@ -527,5 +298,73 @@ router.post("/distinct", auth, async (req, res) => {
   }
 });
 
-module.exports = router;
+router.get("/:entityId/column_visibility_by_user", auth, async (req, res) => {
+  console.log("PERSONAL API CALLED", req.body);
+  // try {
+  //   const userId = req.user.id;
 
+  //   const [rows] = await db.query(
+  //     `
+  //     SELECT DISTINCT
+  //         mdf_menus.id AS menu_id,
+  //         mdf_menus.name AS menu_name,
+  //         mdf_menus.path AS href,
+  //         mdf_menus.parent_id AS parent_id,
+  //         mdf_menus.is_system_mode AS is_system_mode,
+  //         mdf_permissions.action AS permissions
+  //     FROM
+  //         mdf_role_permissions
+  //     JOIN
+  //         mdf_menus
+  //         ON mdf_role_permissions.menu_id = mdf_menus.id
+  //     JOIN
+  //         mdf_permissions
+  //         ON mdf_role_permissions.permission_id = mdf_permissions.id
+  //     JOIN
+  //         mdf_user_roles
+  //         ON mdf_role_permissions.role_id = mdf_user_roles.role_id
+  //     WHERE
+  //         mdf_user_roles.user_id = ?
+  //     `,
+  //     [userId]
+  //   );
+
+  //   const map = new Map();
+
+  //   for (const row of rows) {
+  //     if (!map.has(row.menu_id)) {
+  //       map.set(row.menu_id, {
+  //         menu_id: row.menu_id,
+  //         menu_name: row.menu_name,
+  //         href: row.href,
+  //         parent_id: row.parent_id,
+  //         is_system_mode: row.is_system_mode,
+  //         permissions: [],
+  //       });
+  //     }
+
+  //     const menu = map.get(row.menu_id);
+
+  //     if (row.permissions && !menu.permissions.includes(row.permissions)) {
+  //       menu.permissions.push(row.permissions);
+  //     }
+  //   }
+
+  //   const result = [...map.values()];
+
+  //   if (result.length === 0) {
+  //     return res.status(403).json({ message: "No access" });
+  //   }
+
+  //   res.json({
+  //     message: "Success",
+  //     data: result,
+  //   });
+
+  // } catch (err) {
+  //   console.error("MENU ERROR:", err);
+  //   res.status(500).json({ message: "Internal server error" });
+  // }
+});
+
+module.exports = router;

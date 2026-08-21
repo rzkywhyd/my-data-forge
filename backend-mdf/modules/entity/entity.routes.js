@@ -27,7 +27,6 @@ router.get("/", auth, async (req, res) => {
   }
 });
 
-
 /**
  * GET /api/entities/:id/fields
  * Ambil field berdasarkan entity
@@ -48,7 +47,7 @@ router.get("/:id/fields", auth, async (req, res) => {
       WHERE entity_id = ?
       ORDER BY display_order
       `,
-      [id]
+      [id],
     );
 
     res.json({
@@ -62,7 +61,6 @@ router.get("/:id/fields", auth, async (req, res) => {
     });
   }
 });
-
 
 /**
  * 🔥 GET /api/entities/:id/filters
@@ -80,7 +78,7 @@ router.get("/:id/filters", auth, async (req, res) => {
         AND is_active = 1
       ORDER BY filter_type
       `,
-      [id]
+      [id],
     );
 
     res.json({
@@ -94,7 +92,6 @@ router.get("/:id/filters", auth, async (req, res) => {
     });
   }
 });
-
 
 /**
  * 🔥 POST /api/entities/:id/filters
@@ -110,10 +107,9 @@ router.post("/:id/filters", auth, async (req, res) => {
     await conn.beginTransaction();
 
     // delete lama
-    await conn.query(
-      "DELETE FROM mdf_entity_filters WHERE entity_id = ?",
-      [id]
-    );
+    await conn.query("DELETE FROM mdf_entity_filters WHERE entity_id = ?", [
+      id,
+    ]);
 
     // insert baru
     for (const f of filters) {
@@ -123,13 +119,7 @@ router.post("/:id/filters", auth, async (req, res) => {
         (entity_id, filter_type, field_name, operator, value)
         VALUES (?, ?, ?, ?, ?)
         `,
-        [
-          id,
-          f.filter_type,
-          f.field_name,
-          f.operator,
-          f.value,
-        ]
+        [id, f.filter_type, f.field_name, f.operator, f.value],
       );
     }
 
@@ -164,10 +154,7 @@ router.get("/:id/data", auth, async (req, res) => {
     params.push(f.value);
   }
 
-  const [rows] = await db.query(
-    `SELECT * FROM your_table ${where}`,
-    params
-  );
+  const [rows] = await db.query(`SELECT * FROM your_table ${where}`, params);
 
   res.json(rows);
 });
@@ -182,9 +169,7 @@ router.get("/:id/data", auth, async (req, res) => {
   const roleFilters = []; // sementara kosong dulu
 
   // 3. UI FILTER (dari query FE)
-  const uiFilters = req.query.filters
-    ? JSON.parse(req.query.filters)
-    : [];
+  const uiFilters = req.query.filters ? JSON.parse(req.query.filters) : [];
 
   // 4. BUILD QUERY
   const { where, params } = buildWhereQuery({
@@ -193,13 +178,9 @@ router.get("/:id/data", auth, async (req, res) => {
     uiFilters,
   });
 
-  const [rows] = await db.query(
-    `SELECT * FROM your_table ${where}`,
-    params
-  );
+  const [rows] = await db.query(`SELECT * FROM your_table ${where}`, params);
 
   res.json(rows);
 });
-
 
 module.exports = router;

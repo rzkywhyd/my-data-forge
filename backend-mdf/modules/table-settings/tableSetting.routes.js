@@ -27,7 +27,7 @@ router.get("/:id/columns", auth, async (req, res) => {
       WHERE entity_id = ?
       ORDER BY display_order
       `,
-      [id]
+      [id],
     );
 
     res.json({ data: rows });
@@ -52,7 +52,7 @@ router.get("/:id/filters", auth, async (req, res) => {
       FROM mdf_entity_filters
       WHERE entity_id = ?
       `,
-      [id]
+      [id],
     );
 
     res.json({
@@ -83,7 +83,7 @@ router.get("/:id/generals", auth, async (req, res) => {
       FROM mdf_entity_table_config
       WHERE entity_id = ?
       `,
-      [id]
+      [id],
     );
 
     if (!rows.length) {
@@ -117,14 +117,8 @@ router.post("/save", auth, async (req, res) => {
   const conn = await db.getConnection();
 
   try {
-    const {
-      entity_id,
-      menu_name,
-      theme,
-      page_size,
-      columns,
-      filters,
-    } = req.body;
+    const { entity_id, menu_name, theme, page_size, columns, filters } =
+      req.body;
 
     console.log("FILTERS IN:", filters);
 
@@ -142,7 +136,7 @@ router.post("/save", auth, async (req, res) => {
     if (Array.isArray(columns)) {
       await conn.query(
         `DELETE FROM mdf_entity_table_columns WHERE entity_id = ?`,
-        [entity_id]
+        [entity_id],
       );
 
       for (const col of columns) {
@@ -171,7 +165,7 @@ router.post("/save", auth, async (req, res) => {
             col.sort_type ?? null,
             col.freeze_enabled ? 1 : 0,
             col.freeze_type ?? null,
-          ]
+          ],
         );
       }
     }
@@ -184,10 +178,9 @@ router.post("/save", auth, async (req, res) => {
     const safeFilters = Array.isArray(filters) ? filters : [];
 
     // ALWAYS RESET FIRST
-    await conn.query(
-      `DELETE FROM mdf_entity_filters WHERE entity_id = ?`,
-      [entity_id]
-    );
+    await conn.query(`DELETE FROM mdf_entity_filters WHERE entity_id = ?`, [
+      entity_id,
+    ]);
 
     // INSERT ONLY IF EXISTS
     if (safeFilters.length > 0) {
@@ -218,10 +211,8 @@ router.post("/save", auth, async (req, res) => {
             filter_type,
             field_name,
             operator,
-            value !== null && value !== undefined
-              ? String(value)
-              : null,
-          ]
+            value !== null && value !== undefined ? String(value) : null,
+          ],
         );
       }
     }
@@ -245,7 +236,7 @@ router.post("/save", auth, async (req, res) => {
         table_theme = VALUES(table_theme),
         default_page_size = VALUES(default_page_size)
       `,
-      [entity_id, menu_name, theme, page_size]
+      [entity_id, menu_name, theme, page_size],
     );
 
     await conn.commit();
@@ -275,7 +266,7 @@ router.post("/:id/data", auth, async (req, res) => {
 
     const [entityRows] = await db.query(
       `SELECT table_name FROM mdf_entities WHERE entity_id = ?`,
-      [id]
+      [id],
     );
 
     if (!entityRows.length) {
@@ -286,7 +277,7 @@ router.post("/:id/data", auth, async (req, res) => {
 
     const [fieldRows] = await db.query(
       `SELECT field_name FROM mdf_entity_fields WHERE entity_id = ?`,
-      [id]
+      [id],
     );
 
     const fieldSet = new Set(fieldRows.map((f) => f.field_name));
@@ -363,7 +354,7 @@ router.post("/sync-schema", auth, async (req, res) => {
     // 1. ambil table name
     const [entityRows] = await conn.query(
       `SELECT table_name FROM mdf_entities WHERE entity_id = ?`,
-      [entityId]
+      [entityId],
     );
 
     if (!entityRows.length) {
@@ -384,13 +375,11 @@ router.post("/sync-schema", auth, async (req, res) => {
         AND TABLE_NAME = ?
       ORDER BY ORDINAL_POSITION
       `,
-      [tableName]
+      [tableName],
     );
 
     const toLabel = (field) =>
-      field
-        .replace(/_/g, " ")
-        .replace(/\b\w/g, (c) => c.toUpperCase());
+      field.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
     // 3. CHECKING + INSERT (ANTI DUPLICATE PASTI)
     for (const col of columns) {
@@ -405,7 +394,7 @@ router.post("/sync-schema", auth, async (req, res) => {
           AND field_name = ?
         LIMIT 1
         `,
-        [entityId, fieldName]
+        [entityId, fieldName],
       );
 
       if (exists.length > 0) {
@@ -432,24 +421,22 @@ router.post("/sync-schema", auth, async (req, res) => {
           fieldName,
           toLabel(fieldName),
           col.DATA_TYPE,
-          col.ORDINAL_POSITION
-        ]
+          col.ORDINAL_POSITION,
+        ],
       );
     }
 
     res.json({
       message: "Schema synced successfully",
-      total: columns.length
+      total: columns.length,
     });
-
   } catch (err) {
     console.error("SYNC SCHEMA ERROR:", err);
 
     res.status(500).json({
       message: "Internal server error",
-      error: err.message
+      error: err.message,
     });
-
   } finally {
     conn.release();
   }

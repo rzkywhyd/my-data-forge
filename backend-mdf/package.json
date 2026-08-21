@@ -6,7 +6,9 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node app.js",
-    "dev": "nodemon app.js"
+    "dev": "nodemon app.js",
+    "format": "prettier \"**/*.{js,ts,tsx}\" --write",
+    "format:check": "prettier \"**/*.{js,ts,tsx}\" --check"
   },
   "keywords": [],
   "author": "",
@@ -21,6 +23,7 @@
     "mysql2": "^3.22.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "prettier": "^3.9.6"
   }
 }

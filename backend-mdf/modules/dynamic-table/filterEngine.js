@@ -200,7 +200,13 @@ function applyFixedFilters(dbFilters, allowedSet, where, params) {
 // =========================
 // DEFAULT FILTERS (RESET SAFE)
 // =========================
-function applyDefaultFilters(dbFilters, allowedSet, userFilterMap, where, params) {
+function applyDefaultFilters(
+  dbFilters,
+  allowedSet,
+  userFilterMap,
+  where,
+  params,
+) {
   for (const f of dbFilters) {
     if (f.filter_type !== "default") continue;
     if (!allowedSet.has(f.field_name)) continue;
@@ -241,7 +247,7 @@ function applyFilters({
   allowed = [],
   filterModel = {},
   where = [],
-  params = []
+  params = [],
 }) {
   const allowedSet = toAllowedSet(allowed);
   const userFilterMap = buildUserFilterMap(filterModel);
@@ -249,9 +255,7 @@ function applyFilters({
   // =========================
   // RESET DETECTION (IMPORTANT FIX)
   // =========================
-  const isReset =
-    !filterModel ||
-    Object.keys(filterModel).length === 0;
+  const isReset = !filterModel || Object.keys(filterModel).length === 0;
 
   // =========================
   // 1. FIXED FILTERS (ALWAYS ON)
@@ -282,5 +286,5 @@ module.exports = {
   applyDefaultFilters,
   applyUserFilters,
   applyOperator,
-  toAllowedSet
+  toAllowedSet,
 };

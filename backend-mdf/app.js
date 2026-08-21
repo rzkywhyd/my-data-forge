@@ -25,18 +25,16 @@ app.use("/api/entities", require("./modules/entity/entity.routes"));
 // 🔥 TABLE SETTING (INI YANG KURANG)
 app.use(
   "/api/table-setting",
-  require("./modules/table-settings/tableSetting.routes")
+  require("./modules/table-settings/tableSetting.routes"),
 );
 
 app.use("/api/users", require("./modules/users/user.routes"));
 
 app.use("/api/personal", require("./modules/personal/personal.routes"));
 
-
-
 app.use(
   "/api/visibilityPerUser",
-  require("./modules/dynamic-table/visibilityPerUser.routes")
+  require("./modules/dynamic-table/visibilityPerUser.routes"),
 );
 
 // =====================

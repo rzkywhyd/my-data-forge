@@ -29,7 +29,7 @@ router.get("/", auth, async (req, res) => {
       WHERE 
           mdf_user_roles.user_id = ?
       `,
-      [userId]
+      [userId],
     );
 
     const map = new Map();
@@ -63,7 +63,6 @@ router.get("/", auth, async (req, res) => {
       message: "Success",
       data: result,
     });
-
   } catch (err) {
     console.error("MENU ERROR:", err);
     res.status(500).json({ message: "Internal server error" });
