@@ -54,6 +54,7 @@ import type { SortModelItem, FilterModel } from "ag-grid-community";
 
 type ColumnConfig = {
   field_name: string;
+  field_label: string;
   label: string;
   display_order: number;
   is_visible: number | boolean;
@@ -90,7 +91,7 @@ export type EntityDataPayload = {
 
 export const tableService = {
   getPersonal: async <T = Record<string, unknown>>(
-    payload: EntityDataPayload
+    payload: EntityDataPayload,
   ): Promise<PersonalResponse<T>> => {
     const res = await api.post("/personal", payload);
     return res.data;

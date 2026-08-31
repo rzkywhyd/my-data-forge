@@ -4,14 +4,14 @@ import type {
   IDatasource,
   IGetRowsParams,
   SortModelItem,
-  FilterModel
+  FilterModel,
 } from "ag-grid-community";
 
 import { tableService } from "../services/tableService";
 
 type ColumnConfig = {
   field_name: string;
-  label: string;
+  field_label: string;
   display_order: number;
   is_visible: number | boolean;
   is_filterable: number | boolean;
@@ -35,21 +35,23 @@ export const useDynamicTable = () => {
   // BUILD COLUMNS
   // =========================
   const createColumns = useCallback(
-    
     (cols: ColumnConfig[], entityId: number): ColDef<RowData>[] => {
-        
       return cols
         .filter((c) => Boolean(c.is_visible))
         .sort((a, b) => a.display_order - b.display_order)
-        .map((c) => ({
+        .map((c, index) => ({
           field: c.field_name,
-          headerName: c.label,
+          headerName: c.field_label,
+
+          // Checkbox selection
+          checkboxSelection: index === 0,
+          headerCheckboxSelection: index === 0,
 
           // 🔥 custom filter kamu
           filter: c.is_filterable ? "LazySetFilter" : false,
 
           filterParams: {
-            context: { entityId }
+            context: { entityId },
           },
 
           sortable: true,
@@ -62,10 +64,10 @@ export const useDynamicTable = () => {
               : undefined,
 
           resizable: false,
-        //   flex: c.width ? undefined : 1
+          //   flex: c.width ? undefined : 1
         }));
     },
-    []
+    [],
   );
 
   // =========================
@@ -77,10 +79,10 @@ export const useDynamicTable = () => {
         .filter((c) => c.sort_enabled === 1 && c.sort_type)
         .map((c) => ({
           colId: c.field_name,
-          sort: c.sort_type as "asc" | "desc"
+          sort: c.sort_type as "asc" | "desc",
         }));
     },
-    []
+    [],
   );
 
   // =========================
@@ -93,7 +95,7 @@ export const useDynamicTable = () => {
         startRow: 0,
         endRow: 1,
         sortModel: [],
-        filterModel: {} as FilterModel
+        filterModel: {} as FilterModel,
       });
 
       const cols: ColumnConfig[] = res.columns;
@@ -102,85 +104,97 @@ export const useDynamicTable = () => {
 
       return cols;
     },
-    [createColumns]
+    [createColumns],
   );
 
-  // =========================
-  // DATASOURCE
-  // =========================
-//   const createDataSource = useCallback(
-//     (entityId: number, defaultSortModel: DefaultSortModel): IDatasource => ({
-//       getRows: async (params: IGetRowsParams) => {
-//         try {
-//           params.api.setGridOption("loading", true);
-//           // 🔥 STRONG TYPE FILTER MODEL
-//           const filterModel: FilterModel = params.filterModel ?? {};
+  // const createDataSource = useCallback(
+  //   (entityId: number, defaultSortModel: DefaultSortModel): IDatasource => ({
+  //     getRows: async (params: IGetRowsParams) => {
+  //       try {
+  //         const cleared = [...clearedFiltersQueueRef.current];
 
-//           const sortModel =
-//             params.sortModel?.length
-//               ? params.sortModel
-//               : defaultSortModel;
+  //         // reset langsung supaya tidak double kirim
+  //         clearedFiltersQueueRef.current = [];
+  //         params.api.setGridOption("loading", true);
 
-//           const res = await tableService.getPersonal({
-//             entityId,
-//             startRow: params.startRow,
-//             endRow: params.endRow,
-//             sortModel,
-//             filterModel
-//           });
-//           params.api.setGridOption("loading", false);
-//           params.successCallback(res.rows, res.total);
-//         } catch (err) {
-//           console.error("DATASOURCE ERROR:", err);
-//           params.api.setGridOption("loading", false);
-//           params.failCallback();
-//         }
-//       }
-//     }),
-//     []
-//   );
-const createDataSource = useCallback(
-  (entityId: number, defaultSortModel: DefaultSortModel): IDatasource => ({
-    getRows: async (params: IGetRowsParams) => {
-      try {
-        const cleared = [...clearedFiltersQueueRef.current];
+  //         const filterModel: FilterModel = params.filterModel ?? {};
 
-  // reset langsung supaya tidak double kirim
-  clearedFiltersQueueRef.current = [];
-        params.api.setGridOption("loading", true);
+  //         const sortModel = params.sortModel?.length
+  //           ? params.sortModel
+  //           : defaultSortModel;
 
-        const filterModel: FilterModel = params.filterModel ?? {};
+  //         const res = await tableService.getPersonal({
+  //           entityId,
+  //           startRow: params.startRow,
+  //           endRow: params.endRow,
+  //           sortModel,
+  //           filterModel,
 
-        const sortModel =
-          params.sortModel?.length
+  //           // 🔥 INI KUNCI
+  //           clearedFilters: cleared,
+  //         });
+
+  //         // reset setelah request
+  //         clearedFiltersRef.current = [];
+
+  //         params.api.setGridOption("loading", false);
+  //         params.successCallback(res.rows, res.total);
+  //       } catch (err) {
+  //         console.error("DATASOURCE ERROR:", err);
+  //         params.api.setGridOption("loading", false);
+  //         params.failCallback();
+  //       }
+  //     },
+  //   }),
+  //   [],
+  // );
+  const createDataSource = useCallback(
+    (
+      entityId: number,
+      defaultSortModel: DefaultSortModel,
+      onTotalChange?: (total: number) => void,
+    ): IDatasource => ({
+      getRows: async (params: IGetRowsParams) => {
+        try {
+          const cleared = [...clearedFiltersQueueRef.current];
+
+          clearedFiltersQueueRef.current = [];
+
+          params.api.setGridOption("loading", true);
+
+          const filterModel: FilterModel = params.filterModel ?? {};
+
+          const sortModel = params.sortModel?.length
             ? params.sortModel
             : defaultSortModel;
 
-        const res = await tableService.getPersonal({
-          entityId,
-          startRow: params.startRow,
-          endRow: params.endRow,
-          sortModel,
-          filterModel,
+          const res = await tableService.getPersonal({
+            entityId,
+            startRow: params.startRow,
+            endRow: params.endRow,
+            sortModel,
+            filterModel,
+            clearedFilters: cleared,
+          });
 
-          // 🔥 INI KUNCI
-          clearedFilters: cleared,
-        });
+          clearedFiltersRef.current = [];
 
-        // reset setelah request
-        clearedFiltersRef.current = [];
+          params.api.setGridOption("loading", false);
 
-        params.api.setGridOption("loading", false);
-        params.successCallback(res.rows, res.total);
-      } catch (err) {
-        console.error("DATASOURCE ERROR:", err);
-        params.api.setGridOption("loading", false);
-        params.failCallback();
-      }
-    },
-  }),
-  []
-);
+          // 🔥 Ambil total dari response backend
+          onTotalChange?.(res.total);
+
+          params.successCallback(res.rows, res.total);
+        } catch (err) {
+          console.error("DATASOURCE ERROR:", err);
+
+          params.api.setGridOption("loading", false);
+          params.failCallback();
+        }
+      },
+    }),
+    [],
+  );
 
   // =========================
   // RETURN
@@ -189,7 +203,6 @@ const createDataSource = useCallback(
     columnDefs,
     initColumns,
     createDataSource,
-    buildDefaultSortModel
+    buildDefaultSortModel,
   };
 };
-

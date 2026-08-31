@@ -15,34 +15,37 @@ export type VisibilityPerUserResponse = {
   columns: ColumnConfig[];
 };
 
-
 export const visibilityPerUserService = {
-
   getColumns: async (
-  entityId: number,
-      ): Promise<VisibilityPerUserResponse> => {
-  const res = await api.get(
-    `/personal/${entityId}/column_visibility_by_user`,
-  );
- 
-  return res.data ;
-},
-
-
-  saveColumns: async (
     entityId: number,
-    columns: ColumnConfig[],
-  ) => {
-
-    const res = await api.post(
-      `personal/${entityId}/save_column_visibility_by_user`,
+    userId: number,
+  ): Promise<VisibilityPerUserResponse> => {
+    const res = await api.get(
+      `/personal/${entityId}/column_visibility_by_user`,
       {
-        entityId,
-        columns,
+        params: {
+          userId,
+        },
       },
     );
 
     return res.data;
   },
 
+  saveColumns: async (
+    entityId: number,
+    userId: number,
+    columns: ColumnConfig[],
+  ) => {
+    const res = await api.post(
+      `personal/${entityId}/save_column_visibility_by_user`,
+      {
+        entityId,
+        userId,
+        columns,
+      },
+    );
+
+    return res.data;
+  },
 };

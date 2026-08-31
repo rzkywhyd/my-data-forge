@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import api from "@/lib/api";
 import type { IFilterParams } from "ag-grid-community";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type Props = IFilterParams & {
@@ -35,6 +37,7 @@ export default function LazySetFilter(props: Props) {
   // =========================
   // LOAD DISTINCT VALUES
   // =========================
+
   useEffect(() => {
     if (!field) return;
 
@@ -51,12 +54,12 @@ export default function LazySetFilter(props: Props) {
         field,
         currentField: field,
         filterModel: currentFilterModel,
-
-        // 🔥 send cleared filters to BE
+        search,
         clearedFilters: clearedFiltersRef.current,
       });
 
       const data = res.data ?? [];
+
       setValues(data);
 
       const existing = apiRef.getFilterModel()?.[field];
@@ -72,7 +75,6 @@ export default function LazySetFilter(props: Props) {
 
         setSelected(filtered);
         setAppliedSelected(filtered);
-
         return;
       }
 
@@ -85,7 +87,6 @@ export default function LazySetFilter(props: Props) {
 
         setSelected(filtered);
         setAppliedSelected(filtered);
-
         return;
       }
 
@@ -93,8 +94,14 @@ export default function LazySetFilter(props: Props) {
       setAppliedSelected(data);
     };
 
-    load();
-  }, [field, props.context.entityId, apiRef, filterModel]);
+    const timer = setTimeout(() => {
+      load();
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [field, search, props.context.entityId, apiRef, filterModel]);
 
   // =========================
   // SEARCH SCOPE
@@ -234,7 +241,7 @@ export default function LazySetFilter(props: Props) {
   // UI
   // =========================
   return (
-    <div className="w-70 rounded-md border bg-white shadow-lg overflow-hidden">
+    <div className="w-70 h-105 rounded-md border bg-white shadow-lg overflow-hidden">
       {/* HEADER */}
       <div className="flex justify-between px-2 py-2 border-b bg-gray-50">
         <Tabs value={tab} onValueChange={(v) => setTab(v as TabFilter)}>
@@ -257,48 +264,73 @@ export default function LazySetFilter(props: Props) {
       {/* LIST */}
       {tab === "list" && (
         <div className="p-2">
-          <label className="flex items-center gap-2 text-xs mb-2 cursor-pointer">
-            <input
-              type="checkbox"
+          {/* SELECT ALL */}
+          <div className="mb-2 flex items-center gap-2">
+            <Checkbox
+              id="select-all"
               checked={isAllSelected}
-              onChange={handleSelectAll}
+              onCheckedChange={() => {
+                handleSelectAll();
+              }}
             />
 
-            {selectAllLabel}
-          </label>
+            <label
+              htmlFor="select-all"
+              className="cursor-pointer text-xs font-medium"
+            >
+              {selectAllLabel}
+            </label>
+          </div>
 
-          <input
+          {/* SEARCH */}
+          <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search..."
-            className="w-full border rounded px-2 py-1 text-xs mb-2"
+            className="mb-2 h-8 text-xs"
           />
 
-          <div className="max-h-50 overflow-auto space-y-1">
+          {/* VALUES */}
+          <div className="h-60 space-y-1 overflow-auto">
             {sortedScope.map((v) => (
-              <label
+              <div
                 key={v}
-                className="flex items-center gap-2 text-xs px-1 py-1 hover:bg-gray-100 rounded"
+                className="flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted"
               >
-                <input
-                  type="checkbox"
+                <Checkbox
+                  id={`filter-${v}`}
                   checked={selected.includes(v)}
-                  onChange={() => toggle(v)}
+                  onCheckedChange={() => toggle(v)}
                 />
 
-                <span>{v}</span>
-              </label>
+                <label
+                  htmlFor={`filter-${v}`}
+                  className="flex-1 cursor-pointer truncate"
+                  title={v}
+                >
+                  {v}
+                </label>
+              </div>
             ))}
           </div>
 
-          <div className="flex justify-between mt-2 pt-2 border-t">
-            <Button onClick={handleClear} className="text-xs text-white">
+          {/* ACTIONS */}
+          <div className="mt-2 flex justify-between border-t pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleClear}
+              className="h-7 px-2 text-xs"
+            >
               Clear
             </Button>
 
             <Button
+              type="button"
+              size="sm"
               onClick={applyFilter}
-              className="text-xs bg-black text-white"
+              className="h-7 bg-black px-3 text-xs text-white hover:bg-gray-800"
             >
               Apply
             </Button>
@@ -308,11 +340,11 @@ export default function LazySetFilter(props: Props) {
 
       {/* PASTE */}
       {tab === "paste" && (
-        <div className="p-2">
+        <div className="max-h-80 p-2">
           <textarea
             value={pasteText}
             onChange={(e) => setPasteText(e.target.value)}
-            className="w-full border rounded p-2 text-xs h-40"
+            className="w-full border rounded p-2 text-xs h-75"
             placeholder={`value1\nvalue2\nvalue3`}
           />
 

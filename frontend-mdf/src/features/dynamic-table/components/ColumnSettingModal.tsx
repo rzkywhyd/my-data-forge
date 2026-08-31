@@ -6,12 +6,14 @@ import {
 
 type Props = {
   entityId: number;
+  userId: number;
   onClose: () => void;
   onSave?: (columns: ColumnConfig[]) => void;
 };
 
 export default function ColumnSettingModal({
   entityId,
+  userId,
   onClose,
   onSave,
 }: Props) {
@@ -21,7 +23,10 @@ export default function ColumnSettingModal({
   useEffect(() => {
     async function loadColumns() {
       try {
-        const result = await visibilityPerUserService.getColumns(entityId);
+        const result = await visibilityPerUserService.getColumns(
+          entityId,
+          userId,
+        );
 
         setLocalColumns(
           [...result.columns].sort(
@@ -40,7 +45,7 @@ export default function ColumnSettingModal({
     }
 
     loadColumns();
-  }, [entityId]);
+  }, [entityId, userId]);
 
   const handleToggle = (fieldName: string, checked: boolean) => {
     setLocalColumns((prev) =>
@@ -57,7 +62,11 @@ export default function ColumnSettingModal({
 
   const handleSave = async () => {
     try {
-      await visibilityPerUserService.saveColumns(entityId, localColumns);
+      await visibilityPerUserService.saveColumns(
+        entityId,
+        userId,
+        localColumns,
+      );
 
       onSave?.(localColumns);
 

@@ -1,3 +1,298 @@
+// // =========================
+// // HELPERS
+// // =========================
+
+// function toAllowedSet(allowed) {
+//   return new Set(Array.isArray(allowed) ? allowed : []);
+// }
+
+// function buildUserFilterMap(filterModel) {
+//   const map = new Set();
+//   if (!filterModel) return map;
+
+//   for (const key in filterModel) {
+//     map.add(key);
+//   }
+
+//   return map;
+// }
+
+// // =========================
+// // SAFE FIELD (SQL INJECTION SAFE)
+// // =========================
+// function safeField(field) {
+//   return `\`${String(field).replace(/[^a-zA-Z0-9_]/g, "")}\``;
+// }
+
+// // =========================
+// // OPERATOR ENGINE (FULL)
+// // =========================
+// function applyOperator(field, f, where, params) {
+//   const col = safeField(field);
+
+//   // =========================
+//   // TEXT FILTER
+//   // =========================
+//   if (f.filterType === "text") {
+//     const val = f.filter;
+
+//     if (val === undefined || val === null || val === "") return;
+
+//     switch (f.type) {
+//       case "contains":
+//         where.push(`${col} LIKE ?`);
+//         params.push(`%${val}%`);
+//         break;
+
+//       case "equals":
+//         where.push(`${col} = ?`);
+//         params.push(val);
+//         break;
+
+//       case "notEqual":
+//         where.push(`${col} != ?`);
+//         params.push(val);
+//         break;
+
+//       case "startsWith":
+//         where.push(`${col} LIKE ?`);
+//         params.push(`${val}%`);
+//         break;
+
+//       case "endsWith":
+//         where.push(`${col} LIKE ?`);
+//         params.push(`%${val}`);
+//         break;
+
+//       case "blank":
+//         where.push(`(${col} IS NULL OR ${col} = '')`);
+//         break;
+
+//       case "notBlank":
+//         where.push(`(${col} IS NOT NULL AND ${col} != '')`);
+//         break;
+//     }
+//   }
+
+//   // =========================
+//   // SET FILTER
+//   // =========================
+//   if (f.filterType === "set") {
+//     if (Array.isArray(f.values) && f.values.length) {
+//       const placeholders = f.values.map(() => "?").join(",");
+//       where.push(`${col} IN (${placeholders})`);
+//       params.push(...f.values);
+//     }
+//   }
+
+//   // =========================
+//   // NUMBER FILTER (FULL SAFE)
+//   // =========================
+//   if (f.filterType === "number") {
+//     let val = f.filter;
+
+//     if (val === "" || val === null || val === undefined) return;
+
+//     val = Number(val);
+//     if (isNaN(val)) return;
+
+//     switch (f.type) {
+//       case "equals":
+//         where.push(`${col} = ?`);
+//         params.push(val);
+//         break;
+
+//       case "notEqual":
+//         where.push(`${col} != ?`);
+//         params.push(val);
+//         break;
+
+//       case "greaterThan":
+//         where.push(`${col} > ?`);
+//         params.push(val);
+//         break;
+
+//       case "greaterThanOrEqual":
+//         where.push(`${col} >= ?`);
+//         params.push(val);
+//         break;
+
+//       case "lessThan":
+//         where.push(`${col} < ?`);
+//         params.push(val);
+//         break;
+
+//       case "lessThanOrEqual":
+//         where.push(`${col} <= ?`);
+//         params.push(val);
+//         break;
+
+//       case "inRange": {
+//         let to = f.filterTo;
+
+//         if (to === "" || to === null || to === undefined) return;
+
+//         to = Number(to);
+//         if (isNaN(to)) return;
+
+//         where.push(`${col} BETWEEN ? AND ?`);
+//         params.push(val, to);
+//         break;
+//       }
+//     }
+//   }
+
+//   // =========================
+//   // DATE FILTER
+//   // =========================
+//   if (f.filterType === "date") {
+//     const val = f.dateFrom;
+
+//     if (!val) return;
+
+//     switch (f.type) {
+//       case "equals":
+//         where.push(`DATE(${col}) = ?`);
+//         params.push(val);
+//         break;
+
+//       case "lessThan":
+//         where.push(`DATE(${col}) < ?`);
+//         params.push(val);
+//         break;
+
+//       case "greaterThan":
+//         where.push(`DATE(${col}) > ?`);
+//         params.push(val);
+//         break;
+
+//       case "inRange":
+//         if (!f.dateTo) return;
+//         where.push(`DATE(${col}) BETWEEN ? AND ?`);
+//         params.push(f.dateFrom, f.dateTo);
+//         break;
+//     }
+//   }
+// }
+
+// // =========================
+// // FIXED FILTERS (SYSTEM)
+// // =========================
+// function applyFixedFilters(dbFilters, allowedSet, where, params) {
+//   for (const f of dbFilters) {
+//     if (f.filter_type !== "fixed") continue;
+//     if (!allowedSet.has(f.field_name)) continue;
+
+//     const col = safeField(f.field_name);
+
+//     if (f.operator === "contains") {
+//       where.push(`${col} LIKE ?`);
+//       params.push(`%${f.value}%`);
+//     }
+
+//     if (f.operator === "equals") {
+//       where.push(`${col} = ?`);
+//       params.push(f.value);
+//     }
+//   }
+// }
+
+// // =========================
+// // DEFAULT FILTERS (RESET SAFE)
+// // =========================
+// function applyDefaultFilters(
+//   dbFilters,
+//   allowedSet,
+//   userFilterMap,
+//   where,
+//   params,
+// ) {
+//   for (const f of dbFilters) {
+//     if (f.filter_type !== "default") continue;
+//     if (!allowedSet.has(f.field_name)) continue;
+//     if (userFilterMap.has(f.field_name)) continue;
+
+//     const col = safeField(f.field_name);
+
+//     if (f.operator === "contains") {
+//       where.push(`${col} LIKE ?`);
+//       params.push(`%${f.value}%`);
+//     }
+
+//     if (f.operator === "equals") {
+//       where.push(`${col} = ?`);
+//       params.push(f.value);
+//     }
+//   }
+// }
+
+// // =========================
+// // USER FILTERS (AG GRID)
+// // =========================
+// function applyUserFilters(filterModel, allowedSet, where, params) {
+//   console.log("APPLY USER FILTERS:", filterModel);
+//   console.log("ALLOWED SET:", allowedSet);
+//   console.log("WHERE:", where);
+//   console.log("PARAMS:", params);
+//   if (!filterModel) return;
+
+//   for (const key in filterModel) {
+//     if (!allowedSet.has(key)) continue;
+
+//     applyOperator(key, filterModel[key], where, params);
+//   }
+// }
+
+// // =========================
+// // MAIN ENGINE
+// // =========================
+// function applyFilters({
+//   dbFilters = [],
+//   allowed = [],
+//   filterModel = {},
+//   where = [],
+//   params = [],
+// }) {
+//   const allowedSet = toAllowedSet(allowed);
+//   const userFilterMap = buildUserFilterMap(filterModel);
+
+//   // =========================
+//   // RESET DETECTION (IMPORTANT FIX)
+//   // =========================
+//   const isReset = !filterModel || Object.keys(filterModel).length === 0;
+
+//   // =========================
+//   // 1. FIXED FILTERS (ALWAYS ON)
+//   // =========================
+//   applyFixedFilters(dbFilters, allowedSet, where, params);
+
+//   // =========================
+//   // 2. DEFAULT FILTERS (ONLY IF NOT RESET)
+//   // =========================
+//   if (!isReset) {
+//     applyDefaultFilters(dbFilters, allowedSet, userFilterMap, where, params);
+//   }
+
+//   // =========================
+//   // 3. USER FILTERS (AG GRID)
+//   // =========================
+//   applyUserFilters(filterModel, allowedSet, where, params);
+
+//   return { where, params };
+// }
+
+// // =========================
+// // EXPORT
+// // =========================
+// module.exports = {
+//   applyFilters,
+//   applyFixedFilters,
+//   applyDefaultFilters,
+//   applyUserFilters,
+//   applyOperator,
+//   toAllowedSet,
+// };
+
 // =========================
 // HELPERS
 // =========================
@@ -8,6 +303,7 @@ function toAllowedSet(allowed) {
 
 function buildUserFilterMap(filterModel) {
   const map = new Set();
+
   if (!filterModel) return map;
 
   for (const key in filterModel) {
@@ -18,25 +314,32 @@ function buildUserFilterMap(filterModel) {
 }
 
 // =========================
-// SAFE FIELD (SQL INJECTION SAFE)
+// SAFE FIELD
 // =========================
+
 function safeField(field) {
-  return `\`${String(field).replace(/[^a-zA-Z0-9_]/g, "")}\``;
+  const cleaned = String(field).replace(/[^a-zA-Z0-9_]/g, "");
+
+  return `\`${cleaned}\``;
 }
 
 // =========================
-// OPERATOR ENGINE (FULL)
+// OPERATOR ENGINE
 // =========================
+
 function applyOperator(field, f, where, params) {
   const col = safeField(field);
 
   // =========================
   // TEXT FILTER
   // =========================
+
   if (f.filterType === "text") {
     const val = f.filter;
 
-    if (val === undefined || val === null || val === "") return;
+    if (val === undefined || val === null || val === "") {
+      return;
+    }
 
     switch (f.type) {
       case "contains":
@@ -71,29 +374,39 @@ function applyOperator(field, f, where, params) {
       case "notBlank":
         where.push(`(${col} IS NOT NULL AND ${col} != '')`);
         break;
+
+      default:
+        break;
     }
   }
 
   // =========================
   // SET FILTER
   // =========================
+
   if (f.filterType === "set") {
     if (Array.isArray(f.values) && f.values.length) {
       const placeholders = f.values.map(() => "?").join(",");
+
       where.push(`${col} IN (${placeholders})`);
+
       params.push(...f.values);
     }
   }
 
   // =========================
-  // NUMBER FILTER (FULL SAFE)
+  // NUMBER FILTER
   // =========================
+
   if (f.filterType === "number") {
     let val = f.filter;
 
-    if (val === "" || val === null || val === undefined) return;
+    if (val === "" || val === null || val === undefined) {
+      return;
+    }
 
     val = Number(val);
+
     if (isNaN(val)) return;
 
     switch (f.type) {
@@ -130,21 +443,29 @@ function applyOperator(field, f, where, params) {
       case "inRange": {
         let to = f.filterTo;
 
-        if (to === "" || to === null || to === undefined) return;
+        if (to === "" || to === null || to === undefined) {
+          return;
+        }
 
         to = Number(to);
+
         if (isNaN(to)) return;
 
         where.push(`${col} BETWEEN ? AND ?`);
+
         params.push(val, to);
         break;
       }
+
+      default:
+        break;
     }
   }
 
   // =========================
   // DATE FILTER
   // =========================
+
   if (f.filterType === "date") {
     const val = f.dateFrom;
 
@@ -168,20 +489,32 @@ function applyOperator(field, f, where, params) {
 
       case "inRange":
         if (!f.dateTo) return;
+
         where.push(`DATE(${col}) BETWEEN ? AND ?`);
+
         params.push(f.dateFrom, f.dateTo);
+
+        break;
+
+      default:
         break;
     }
   }
 }
 
 // =========================
-// FIXED FILTERS (SYSTEM)
+// FIXED FILTERS
 // =========================
+
 function applyFixedFilters(dbFilters, allowedSet, where, params) {
   for (const f of dbFilters) {
-    if (f.filter_type !== "fixed") continue;
-    if (!allowedSet.has(f.field_name)) continue;
+    if (f.filter_type !== "fixed") {
+      continue;
+    }
+
+    if (!allowedSet.has(f.field_name)) {
+      continue;
+    }
 
     const col = safeField(f.field_name);
 
@@ -198,19 +531,38 @@ function applyFixedFilters(dbFilters, allowedSet, where, params) {
 }
 
 // =========================
-// DEFAULT FILTERS (RESET SAFE)
+// DEFAULT FILTERS
 // =========================
+
 function applyDefaultFilters(
   dbFilters,
   allowedSet,
   userFilterMap,
   where,
   params,
+  currentField = null,
 ) {
   for (const f of dbFilters) {
-    if (f.filter_type !== "default") continue;
-    if (!allowedSet.has(f.field_name)) continue;
-    if (userFilterMap.has(f.field_name)) continue;
+    if (f.filter_type !== "default") {
+      continue;
+    }
+
+    if (!allowedSet.has(f.field_name)) {
+      continue;
+    }
+
+    // Saat DISTINCT:
+    // default filter pada field yang sedang
+    // dicari tidak boleh membatasi distinct list.
+    if (currentField && f.field_name === currentField) {
+      continue;
+    }
+
+    // Jika user sudah mempunyai filter
+    // pada field tersebut, default kalah.
+    if (userFilterMap.has(f.field_name)) {
+      continue;
+    }
 
     const col = safeField(f.field_name);
 
@@ -227,21 +579,38 @@ function applyDefaultFilters(
 }
 
 // =========================
-// USER FILTERS (AG GRID)
+// USER FILTERS
 // =========================
-function applyUserFilters(filterModel, allowedSet, where, params) {
+
+function applyUserFilters(
+  filterModel,
+  allowedSet,
+  where,
+  params,
+  currentField = null,
+) {
   if (!filterModel) return;
 
   for (const key in filterModel) {
-    if (!allowedSet.has(key)) continue;
+    if (!allowedSet.has(key)) {
+      continue;
+    }
+
+    // Saat DISTINCT:
+    // jangan gunakan filter dari field
+    // yang sedang dicari distinct.
+    if (currentField && key === currentField) {
+      continue;
+    }
 
     applyOperator(key, filterModel[key], where, params);
   }
 }
 
 // =========================
-// MAIN ENGINE
+// MAIN FILTER ENGINE
 // =========================
+
 function applyFilters({
   dbFilters = [],
   allowed = [],
@@ -250,36 +619,46 @@ function applyFilters({
   params = [],
 }) {
   const allowedSet = toAllowedSet(allowed);
+
   const userFilterMap = buildUserFilterMap(filterModel);
 
   // =========================
-  // RESET DETECTION (IMPORTANT FIX)
+  // RESET DETECTION
   // =========================
+
   const isReset = !filterModel || Object.keys(filterModel).length === 0;
 
   // =========================
-  // 1. FIXED FILTERS (ALWAYS ON)
+  // 1. FIXED FILTERS
+  // ALWAYS ON
   // =========================
+
   applyFixedFilters(dbFilters, allowedSet, where, params);
 
   // =========================
-  // 2. DEFAULT FILTERS (ONLY IF NOT RESET)
+  // 2. DEFAULT FILTERS
   // =========================
+
   if (!isReset) {
     applyDefaultFilters(dbFilters, allowedSet, userFilterMap, where, params);
   }
 
   // =========================
-  // 3. USER FILTERS (AG GRID)
+  // 3. USER FILTERS
   // =========================
+
   applyUserFilters(filterModel, allowedSet, where, params);
 
-  return { where, params };
+  return {
+    where,
+    params,
+  };
 }
 
 // =========================
 // EXPORT
 // =========================
+
 module.exports = {
   applyFilters,
   applyFixedFilters,
@@ -287,4 +666,6 @@ module.exports = {
   applyUserFilters,
   applyOperator,
   toAllowedSet,
+  buildUserFilterMap,
+  safeField,
 };
