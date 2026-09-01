@@ -1,45 +1,66 @@
 const router = require("express").Router();
-const db = require("../../config/db");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
+const db = require("../../config/db");
+
 router.post("/", async (req, res) => {
-  console.log("Login request body:", req.body); // Debug: log request body
   try {
     const { email, password } = req.body;
 
-    // 0. validasi input
+    // Validasi input
     if (!email || !password) {
-      return res
-        .status(400)
-        .json({ message: "Email dan password wajib diisi" });
+      return res.status(400).json({
+        message: "Email dan password wajib diisi",
+      });
     }
 
-    // 1. cari user
-    const [users] = await db.query(
-      "SELECT * FROM mdf_users WHERE email = ? LIMIT 1",
-      [email],
+    // Cari user berdasarkan email
+    const result = await db.query(
+      `
+        SELECT id, name, email, status, password_hash
+        FROM mdf_users
+        WHERE email = $1
+        LIMIT 1
+      `,
+      [email.trim()],
     );
 
-    if (users.length === 0) {
-      return res.status(400).json({ message: "Email tidak ditemukan" });
+    // User tidak ditemukan
+    if (result.rows.length === 0) {
+      return res.status(400).json({
+        message: "Email atau password salah",
+      });
     }
 
-    const user = users[0];
+    const user = result.rows[0];
 
-    // 2. cek status user
+    // Cek status user
     if (user.status !== "active") {
-      return res.status(403).json({ message: "User tidak aktif" });
+      return res.status(403).json({
+        message: "User tidak aktif",
+      });
     }
 
-    // 3. cek password
+    // Verifikasi password
     const isMatch = await bcrypt.compare(password, user.password_hash);
 
     if (!isMatch) {
-      return res.status(400).json({ message: "Password salah" });
+      return res.status(400).json({
+        message: "Email atau password salah",
+      });
     }
 
-    // 4. generate JWT (FIX: pakai env saja)
+    // Pastikan JWT secret tersedia
+    if (!process.env.JWT_SECRET) {
+      console.error("JWT_SECRET belum dikonfigurasi");
+
+      return res.status(500).json({
+        message: "Konfigurasi server bermasalah",
+      });
+    }
+
+    // Generate JWT
     const token = jwt.sign(
       {
         id: user.id,
@@ -47,12 +68,12 @@ router.post("/", async (req, res) => {
       },
       process.env.JWT_SECRET,
       {
-        expiresIn: process.env.JWT_EXPIRES_IN,
+        expiresIn: process.env.JWT_EXPIRES_IN || "3h",
       },
     );
 
-    // 5. response
-    res.json({
+    // Response
+    return res.status(200).json({
       message: "Login berhasil",
       token,
       user: {
@@ -62,9 +83,12 @@ router.post("/", async (req, res) => {
         status: user.status,
       },
     });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Internal server error" });
+  } catch (error) {
+    console.error("Login error:", error);
+
+    return res.status(500).json({
+      message: "Internal server error",
+    });
   }
 });
 

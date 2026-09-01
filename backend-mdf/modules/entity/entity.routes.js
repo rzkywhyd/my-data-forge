@@ -1,4 +1,5 @@
 const router = require("express").Router();
+
 const db = require("../../config/db");
 const auth = require("../../middleware/auth");
 const { buildFixedFilters } = require("../../utils/filterEngine");
@@ -10,18 +11,20 @@ const { buildWhereQuery } = require("../../utils/queryBuilder");
  */
 router.get("/", auth, async (req, res) => {
   try {
-    const [rows] = await db.query(`
+    const result = await db.query(`
       SELECT *
       FROM mdf_entities
+      ORDER BY id
     `);
 
-    res.json({
+    return res.status(200).json({
       message: "Success",
-      data: rows || [],
+      data: result.rows,
     });
-  } catch (err) {
-    console.error("ENTITY ERROR:", err);
-    res.status(500).json({
+  } catch (error) {
+    console.error("ENTITY ERROR:", error);
+
+    return res.status(500).json({
       message: "Internal server error",
     });
   }
@@ -35,152 +38,199 @@ router.get("/:id/fields", auth, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [rows] = await db.query(
+    const result = await db.query(
       `
-      SELECT 
-        field_id,
-        field_name,
-        field_label,
-        is_visible_default,
-        display_order
-      FROM mdf_entity_fields
-      WHERE entity_id = ?
-      ORDER BY display_order
+        SELECT
+          field_id,
+          field_name,
+          field_label,
+          is_visible_default,
+          display_order
+        FROM mdf_entity_fields
+        WHERE entity_id = $1
+        ORDER BY display_order
       `,
       [id],
     );
 
-    res.json({
+    return res.status(200).json({
       message: "Success",
-      data: rows || [],
+      data: result.rows,
     });
-  } catch (err) {
-    console.error("FIELDS ERROR:", err);
-    res.status(500).json({
+  } catch (error) {
+    console.error("FIELDS ERROR:", error);
+
+    return res.status(500).json({
       message: "Internal server error",
     });
   }
 });
 
 /**
- * 🔥 GET /api/entities/:id/filters
+ * GET /api/entities/:id/filters
  * Ambil filters (default + fixed)
  */
 router.get("/:id/filters", auth, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [rows] = await db.query(
+    const result = await db.query(
       `
-      SELECT *
-      FROM mdf_entity_filters
-      WHERE entity_id = ?
-        AND is_active = 1
-      ORDER BY filter_type
+        SELECT *
+        FROM mdf_entity_filters
+        WHERE entity_id = $1
+          AND is_active = true
+        ORDER BY filter_type
       `,
       [id],
     );
 
-    res.json({
+    return res.status(200).json({
       message: "Success",
-      data: rows || [],
+      data: result.rows,
     });
-  } catch (err) {
-    console.error("FILTERS ERROR:", err);
-    res.status(500).json({
+  } catch (error) {
+    console.error("FILTERS ERROR:", error);
+
+    return res.status(500).json({
       message: "Internal server error",
     });
   }
 });
 
 /**
- * 🔥 POST /api/entities/:id/filters
- * Save filters (replace all)
+ * POST /api/entities/:id/filters
+ * Replace semua filters untuk entity
  */
 router.post("/:id/filters", auth, async (req, res) => {
   const { id } = req.params;
   const { filters } = req.body;
 
-  const conn = await db.getConnection();
+  if (!Array.isArray(filters)) {
+    return res.status(400).json({
+      message: "filters harus berupa array",
+    });
+  }
+
+  const client = await db.connect();
 
   try {
-    await conn.beginTransaction();
+    await client.query("BEGIN");
 
-    // delete lama
-    await conn.query("DELETE FROM mdf_entity_filters WHERE entity_id = ?", [
-      id,
-    ]);
+    // Hapus filter lama
+    await client.query(
+      `
+        DELETE FROM mdf_entity_filters
+        WHERE entity_id = $1
+      `,
+      [id],
+    );
 
-    // insert baru
-    for (const f of filters) {
-      await conn.query(
+    // Insert filter baru
+    for (const filter of filters) {
+      await client.query(
         `
-        INSERT INTO mdf_entity_filters
-        (entity_id, filter_type, field_name, operator, value)
-        VALUES (?, ?, ?, ?, ?)
+          INSERT INTO mdf_entity_filters
+          (
+            entity_id,
+            filter_type,
+            field_name,
+            operator,
+            value
+          )
+          VALUES ($1, $2, $3, $4, $5)
         `,
-        [id, f.filter_type, f.field_name, f.operator, f.value],
+        [
+          id,
+          filter.filter_type,
+          filter.field_name,
+          filter.operator,
+          filter.value,
+        ],
       );
     }
 
-    await conn.commit();
+    await client.query("COMMIT");
 
-    res.json({
+    return res.status(200).json({
       message: "Saved successfully",
       success: true,
     });
-  } catch (err) {
-    await conn.rollback();
-    console.error("SAVE FILTER ERROR:", err);
+  } catch (error) {
+    await client.query("ROLLBACK");
 
-    res.status(500).json({
+    console.error("SAVE FILTER ERROR:", error);
+
+    return res.status(500).json({
       message: "Failed to save filters",
     });
   } finally {
-    conn.release();
+    client.release();
   }
 });
 
+/**
+ * GET /api/entities/:id/data
+ * Ambil data entity dengan:
+ * - Fixed filters
+ * - Role filters
+ * - UI filters
+ */
 router.get("/:id/data", auth, async (req, res) => {
-  const user = req.user;
+  try {
+    const { id } = req.params;
+    const user = req.user;
 
-  const fixedFilters = buildFixedFilters(user);
+    // 1. Fixed filters
+    const fixedFilters = buildFixedFilters(user);
 
-  let where = "WHERE 1=1";
-  let params = [];
+    // 2. Role filters
+    const roleFilters = [];
 
-  for (const f of fixedFilters) {
-    where += ` AND ${f.field} ${f.operator} ?`;
-    params.push(f.value);
+    // 3. UI filters
+    let uiFilters = [];
+
+    if (req.query.filters) {
+      try {
+        uiFilters = JSON.parse(req.query.filters);
+      } catch {
+        return res.status(400).json({
+          message: "Format filters tidak valid",
+        });
+      }
+    }
+
+    // 4. Build WHERE
+    const { where, params } = buildWhereQuery({
+      fixedFilters,
+      roleFilters,
+      uiFilters,
+    });
+
+    /**
+     * TODO:
+     * Ganti your_table dengan nama tabel
+     * berdasarkan entity ID.
+     */
+    const query = `
+      SELECT *
+      FROM your_table
+      ${where}
+    `;
+
+    const result = await db.query(query, params);
+
+    return res.status(200).json({
+      message: "Success",
+      data: result.rows,
+    });
+  } catch (error) {
+    console.error("ENTITY DATA ERROR:", error);
+
+    return res.status(500).json({
+      message: "Internal server error",
+    });
   }
-
-  const [rows] = await db.query(`SELECT * FROM your_table ${where}`, params);
-
-  res.json(rows);
-});
-
-router.get("/:id/data", auth, async (req, res) => {
-  const user = req.user;
-
-  // 1. FIXED (security layer)
-  const fixedFilters = buildFixedFilters(user);
-
-  // 2. ROLE FILTER (nanti bisa expand)
-  const roleFilters = []; // sementara kosong dulu
-
-  // 3. UI FILTER (dari query FE)
-  const uiFilters = req.query.filters ? JSON.parse(req.query.filters) : [];
-
-  // 4. BUILD QUERY
-  const { where, params } = buildWhereQuery({
-    fixedFilters,
-    roleFilters,
-    uiFilters,
-  });
-
-  const [rows] = await db.query(`SELECT * FROM your_table ${where}`, params);
-
-  res.json(rows);
 });
 
 module.exports = router;

@@ -1,66 +1,97 @@
 const express = require("express");
+
 const router = express.Router();
 
 const db = require("../../config/db");
 const auth = require("../../middleware/auth");
 
+/**
+ * POST /api/user-field-settings
+ *
+ * Ambil setting column milik user untuk entity tertentu.
+ */
 router.post("/", auth, async (req, res) => {
   try {
     const { entityId } = req.body;
-
     const userId = req.user.id;
 
-    const [rows] = await db.query(
+    if (!entityId) {
+      return res.status(400).json({
+        message: "entityId wajib diisi",
+      });
+    }
+
+    const result = await db.query(
       `
-      SELECT
-        field_name,
-        display_name,
-        default_visible,
-        default_order,
-        is_visible,
-        display_order
-      FROM mdf_user_field_settings
-      WHERE entity_id = ?
-        AND user_id = ?
-      ORDER BY display_order
+        SELECT
+          field_name,
+          display_name,
+          default_visible,
+          default_order,
+          is_visible,
+          display_order
+        FROM mdf_user_field_settings
+        WHERE entity_id = $1
+          AND user_id = $2
+        ORDER BY display_order
       `,
       [entityId, userId],
     );
 
-    res.json({
-      columns: rows,
+    return res.status(200).json({
+      columns: result.rows,
     });
   } catch (error) {
-    console.error(error);
+    console.error("LOAD VISIBILITY ERROR:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Failed load visibility setting",
     });
   }
 });
 
+/**
+ * POST /api/user-field-settings/save
+ *
+ * Simpan setting column user.
+ */
 router.post("/save", auth, async (req, res) => {
+  const client = await db.connect();
+
   try {
     const { entityId, columns } = req.body;
-
     const userId = req.user.id;
 
-    for (const column of columns) {
-      await db.query(
-        `
-        INSERT INTO mdf_user_field_settings
-        (
-          user_id,
-          entity_id,
-          field_name,
-          is_visible,
-          display_order
-        )
-        VALUES (?, ?, ?, ?, ?)
+    if (!entityId) {
+      return res.status(400).json({
+        message: "entityId wajib diisi",
+      });
+    }
 
-        ON DUPLICATE KEY UPDATE
-          is_visible = VALUES(is_visible),
-          display_order = VALUES(display_order)
+    if (!Array.isArray(columns)) {
+      return res.status(400).json({
+        message: "columns harus berupa array",
+      });
+    }
+
+    await client.query("BEGIN");
+
+    for (const column of columns) {
+      await client.query(
+        `
+          INSERT INTO mdf_user_field_settings
+          (
+            user_id,
+            entity_id,
+            field_name,
+            is_visible,
+            display_order
+          )
+          VALUES ($1, $2, $3, $4, $5)
+          ON CONFLICT (user_id, entity_id, field_name)
+          DO UPDATE SET
+            is_visible = EXCLUDED.is_visible,
+            display_order = EXCLUDED.display_order
         `,
         [
           userId,
@@ -72,15 +103,21 @@ router.post("/save", auth, async (req, res) => {
       );
     }
 
-    res.json({
+    await client.query("COMMIT");
+
+    return res.status(200).json({
       success: true,
     });
   } catch (error) {
-    console.error(error);
+    await client.query("ROLLBACK");
 
-    res.status(500).json({
+    console.error("SAVE VISIBILITY ERROR:", error);
+
+    return res.status(500).json({
       message: "Failed save visibility",
     });
+  } finally {
+    client.release();
   }
 });
 

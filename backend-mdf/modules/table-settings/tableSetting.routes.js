@@ -1,202 +1,269 @@
 const express = require("express");
 const router = express.Router();
+
 const db = require("../../config/db");
 const auth = require("../../middleware/auth");
 
+// =========================================================
+// HELPERS
+// =========================================================
+
 /**
- * =========================
- * GET COLUMNS
- * =========================
+ * PostgreSQL identifier-safe.
+ *
+ * Nama tabel/kolom tidak boleh dimasukkan sebagai parameter
+ * ($1, $2), sehingga harus divalidasi sebelum dimasukkan
+ * ke SQL.
  */
+function safeIdentifier(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const cleaned = value.trim();
+
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(cleaned)) {
+    return null;
+  }
+
+  return `"${cleaned.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Convert value menjadi integer positif.
+ */
+function toPositiveInteger(value, fallback) {
+  const number = Number(value);
+
+  if (!Number.isInteger(number) || number < 1) {
+    return fallback;
+  }
+
+  return number;
+}
+
+// =========================================================
+// GET COLUMNS
+// =========================================================
+
 router.get("/:id/columns", auth, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [rows] = await db.query(
+    const { rows } = await db.query(
       `
-      SELECT 
-        field_id,
-        label,
-        is_visible,
-        display_order,
-        sort_enabled,
-        sort_type,
-        freeze_enabled,
-        freeze_type
-      FROM mdf_entity_table_columns
-      WHERE entity_id = ?
-      ORDER BY display_order
+        SELECT
+          field_id,
+          label,
+          is_visible,
+          display_order,
+          sort_enabled,
+          sort_type,
+          freeze_enabled,
+          freeze_type
+        FROM mdf_entity_table_columns
+        WHERE entity_id = $1
+        ORDER BY display_order ASC
       `,
       [id],
     );
 
-    res.json({ data: rows });
-  } catch (err) {
-    console.error("GET COLUMNS ERROR:", err);
-    res.status(500).json({ message: "Internal server error" });
+    return res.json({
+      data: rows,
+    });
+  } catch (error) {
+    console.error("GET COLUMNS ERROR:", error);
+
+    return res.status(500).json({
+      message: "Internal server error",
+    });
   }
 });
 
-/**
- * =========================
- * GET FILTERS
- * =========================
- */
+// =========================================================
+// GET FILTERS
+// =========================================================
+
 router.get("/:id/filters", auth, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [rows] = await db.query(
+    const { rows } = await db.query(
       `
-      SELECT filter_type, field_name, operator, value
-      FROM mdf_entity_filters
-      WHERE entity_id = ?
+        SELECT
+          filter_type,
+          field_name,
+          operator,
+          value
+        FROM mdf_entity_filters
+        WHERE entity_id = $1
+        ORDER BY filter_type, field_name
       `,
       [id],
     );
 
-    res.json({
-      data: Array.isArray(rows) ? rows : [],
+    return res.json({
+      data: rows,
     });
-  } catch (err) {
-    console.error("GET FILTER ERROR:", err);
-    res.status(500).json({ message: "error" });
+  } catch (error) {
+    console.error("GET FILTER ERROR:", error);
+
+    return res.status(500).json({
+      message: "Internal server error",
+    });
   }
 });
 
-/**
- * =========================
- * GET GENERAL CONFIG
- * =========================
- */
+// =========================================================
+// GET GENERAL CONFIG
+// =========================================================
+
 router.get("/:id/generals", auth, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [rows] = await db.query(
+    const { rows } = await db.query(
       `
-      SELECT 
-        entity_id,
-        menu_name,
-        table_theme,
-        default_page_size
-      FROM mdf_entity_table_config
-      WHERE entity_id = ?
+        SELECT
+          entity_id,
+          menu_name,
+          table_theme,
+          default_page_size
+        FROM mdf_entity_table_config
+        WHERE entity_id = $1
+        LIMIT 1
       `,
       [id],
     );
 
-    if (!rows.length) {
+    if (rows.length === 0) {
       return res.json({
         data: null,
       });
     }
 
-    const r = rows[0];
+    const config = rows[0];
 
-    res.json({
+    return res.json({
       data: {
-        entity_id: r.entity_id,
-        menu_name: r.menu_name,
-        theme: r.table_theme,
-        page_size: r.default_page_size,
+        entity_id: config.entity_id,
+        menu_name: config.menu_name,
+        theme: config.table_theme,
+        page_size: config.default_page_size,
       },
     });
-  } catch (err) {
-    console.error("GET CONFIG ERROR:", err);
-    res.status(500).json({ message: "error" });
+  } catch (error) {
+    console.error("GET CONFIG ERROR:", error);
+
+    return res.status(500).json({
+      message: "Internal server error",
+    });
   }
 });
 
-/**
- * =========================
- * SAVE CONFIG (FIXED TOTAL 🔥)
- * =========================
- */
+// =========================================================
+// SAVE CONFIG
+// =========================================================
+
 router.post("/save", auth, async (req, res) => {
-  const conn = await db.getConnection();
+  const client = await db.connect();
 
   try {
     const { entity_id, menu_name, theme, page_size, columns, filters } =
       req.body;
 
-    console.log("FILTERS IN:", filters);
-
     if (!entity_id) {
-      return res.status(400).json({ message: "entity_id required" });
+      return res.status(400).json({
+        message: "entity_id required",
+      });
     }
 
-    await conn.beginTransaction();
+    await client.query("BEGIN");
 
-    /**
-     * =========================
-     * SAVE COLUMNS
-     * =========================
-     */
+    // =====================================================
+    // SAVE COLUMNS
+    // =====================================================
+
     if (Array.isArray(columns)) {
-      await conn.query(
-        `DELETE FROM mdf_entity_table_columns WHERE entity_id = ?`,
+      await client.query(
+        `
+          DELETE FROM mdf_entity_table_columns
+          WHERE entity_id = $1
+        `,
         [entity_id],
       );
 
-      for (const col of columns) {
-        await conn.query(
+      for (const column of columns) {
+        if (!column?.field_id) {
+          continue;
+        }
+
+        await client.query(
           `
-          INSERT INTO mdf_entity_table_columns (
-            entity_id,
-            field_id,
-            label,
-            is_visible,
-            display_order,
-            sort_enabled,
-            sort_type,
-            freeze_enabled,
-            freeze_type
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO mdf_entity_table_columns (
+              entity_id,
+              field_id,
+              label,
+              is_visible,
+              display_order,
+              sort_enabled,
+              sort_type,
+              freeze_enabled,
+              freeze_type
+            )
+            VALUES (
+              $1,
+              $2,
+              $3,
+              $4,
+              $5,
+              $6,
+              $7,
+              $8,
+              $9
+            )
           `,
           [
             entity_id,
-            col.field_id,
-            col.label,
-            col.visible ? 1 : 0,
-            col.display_order ?? 0,
-            col.sort_enabled ? 1 : 0,
-            col.sort_type ?? null,
-            col.freeze_enabled ? 1 : 0,
-            col.freeze_type ?? null,
+            column.field_id,
+            column.label ?? null,
+            column.visible ? 1 : 0,
+            column.display_order ?? 0,
+            column.sort_enabled ? 1 : 0,
+            column.sort_type ?? null,
+            column.freeze_enabled ? 1 : 0,
+            column.freeze_type ?? null,
           ],
         );
       }
     }
 
-    /**
-     * =========================
-     * SAVE FILTERS (FIXED SAFE 🔥)
-     * =========================
-     */
+    // =====================================================
+    // SAVE FILTERS
+    // =====================================================
+
     const safeFilters = Array.isArray(filters) ? filters : [];
 
-    // ALWAYS RESET FIRST
-    await conn.query(`DELETE FROM mdf_entity_filters WHERE entity_id = ?`, [
-      entity_id,
-    ]);
+    await client.query(
+      `
+        DELETE FROM mdf_entity_filters
+        WHERE entity_id = $1
+      `,
+      [entity_id],
+    );
 
-    // INSERT ONLY IF EXISTS
-    if (safeFilters.length > 0) {
-      for (const f of safeFilters) {
-        const field_name = f.field_name || f.key;
-        const operator = f.operator;
-        const value = f.value;
-        const filter_type = f.filter_type || "default";
+    for (const filter of safeFilters) {
+      const fieldName = filter?.field_name || filter?.key;
+      const operator = filter?.operator;
+      const filterType = filter?.filter_type || "default";
 
-        if (!field_name || !operator) {
-          console.warn("SKIP INVALID FILTER:", f);
-          continue;
-        }
+      if (!fieldName || !operator) {
+        console.warn("SKIP INVALID FILTER:", filter);
+        continue;
+      }
 
-        await conn.query(
-          `
+      await client.query(
+        `
           INSERT INTO mdf_entity_filters (
             entity_id,
             filter_type,
@@ -204,242 +271,476 @@ router.post("/save", auth, async (req, res) => {
             operator,
             value
           )
-          VALUES (?, ?, ?, ?, ?)
-          `,
-          [
-            entity_id,
-            filter_type,
-            field_name,
-            operator,
-            value !== null && value !== undefined ? String(value) : null,
-          ],
-        );
-      }
+          VALUES ($1, $2, $3, $4, $5)
+        `,
+        [
+          entity_id,
+          filterType,
+          fieldName,
+          operator,
+          filter?.value !== null && filter?.value !== undefined
+            ? String(filter.value)
+            : null,
+        ],
+      );
     }
 
-    /**
-     * =========================
-     * SAVE GENERAL CONFIG
-     * =========================
-     */
-    await conn.query(
+    // =====================================================
+    // SAVE GENERAL CONFIG
+    // PostgreSQL UPSERT
+    // =====================================================
+
+    await client.query(
       `
-      INSERT INTO mdf_entity_table_config (
-        entity_id,
-        menu_name,
-        table_theme,
-        default_page_size
-      )
-      VALUES (?, ?, ?, ?)
-      ON DUPLICATE KEY UPDATE
-        menu_name = VALUES(menu_name),
-        table_theme = VALUES(table_theme),
-        default_page_size = VALUES(default_page_size)
+        INSERT INTO mdf_entity_table_config (
+          entity_id,
+          menu_name,
+          table_theme,
+          default_page_size
+        )
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (entity_id)
+        DO UPDATE SET
+          menu_name = EXCLUDED.menu_name,
+          table_theme = EXCLUDED.table_theme,
+          default_page_size = EXCLUDED.default_page_size
       `,
-      [entity_id, menu_name, theme, page_size],
+      [entity_id, menu_name ?? null, theme ?? null, page_size ?? 25],
     );
 
-    await conn.commit();
+    await client.query("COMMIT");
 
-    res.json({ message: "Saved successfully" });
-  } catch (err) {
-    await conn.rollback();
-    console.error("SAVE CONFIG ERROR:", err);
+    return res.json({
+      success: true,
+      message: "Saved successfully",
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
 
-    res.status(500).json({
+    console.error("SAVE CONFIG ERROR:", error);
+
+    return res.status(500).json({
       message: "Internal server error",
     });
   } finally {
-    conn.release();
+    client.release();
   }
 });
 
-/**
- * =========================
- * DATA QUERY
- * =========================
- */
+// =========================================================
+// DATA QUERY
+// =========================================================
+
 router.post("/:id/data", auth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { filters } = req.body;
 
-    const [entityRows] = await db.query(
-      `SELECT table_name FROM mdf_entities WHERE entity_id = ?`,
+    const {
+      filters = [],
+      startRow = 0,
+      endRow = 100,
+      sortModel = [],
+    } = req.body;
+
+    // =====================================================
+    // GET ENTITY TABLE
+    // =====================================================
+
+    const { rows: entityRows } = await db.query(
+      `
+        SELECT table_name
+        FROM mdf_entities
+        WHERE entity_id = $1
+        LIMIT 1
+      `,
       [id],
     );
 
-    if (!entityRows.length) {
-      return res.status(404).json({ message: "Entity not found" });
+    if (entityRows.length === 0) {
+      return res.status(404).json({
+        message: "Entity not found",
+      });
     }
 
-    const tableName = entityRows[0].table_name;
+    const tableName = safeIdentifier(entityRows[0].table_name);
 
-    const [fieldRows] = await db.query(
-      `SELECT field_name FROM mdf_entity_fields WHERE entity_id = ?`,
+    if (!tableName) {
+      return res.status(400).json({
+        message: "Invalid table name",
+      });
+    }
+
+    // =====================================================
+    // GET ALLOWED FIELDS
+    // =====================================================
+
+    const { rows: fieldRows } = await db.query(
+      `
+        SELECT field_name
+        FROM mdf_entity_fields
+        WHERE entity_id = $1
+      `,
       [id],
     );
 
-    const fieldSet = new Set(fieldRows.map((f) => f.field_name));
+    const allowedFields = new Set(fieldRows.map((field) => field.field_name));
 
-    let where = [];
-    let params = [];
+    // =====================================================
+    // BUILD WHERE
+    // =====================================================
 
-    const allFilters = Array.isArray(filters) ? filters : [];
+    const where = [];
+    const params = [];
 
-    for (const f of allFilters) {
-      const field = f.field_name || f.key;
+    if (Array.isArray(filters)) {
+      for (const filter of filters) {
+        const field = filter?.field_name || filter?.key;
 
-      if (!field || !fieldSet.has(field)) continue;
+        if (!field || !allowedFields.has(field)) {
+          continue;
+        }
 
-      switch (f.operator) {
-        case "equals":
-          where.push(`\`${field}\` = ?`);
-          params.push(f.value);
-          break;
+        const column = safeIdentifier(field);
 
-        case "not equals":
-          where.push(`\`${field}\` != ?`);
-          params.push(f.value);
-          break;
+        if (!column) {
+          continue;
+        }
 
-        case "contains":
-          where.push(`\`${field}\` LIKE ?`);
-          params.push(`%${f.value}%`);
-          break;
+        const value = filter?.value;
 
-        case "greater than":
-          where.push(`\`${field}\` > ?`);
-          params.push(f.value);
-          break;
+        switch (filter?.operator) {
+          case "equals": {
+            params.push(value);
+            where.push(`${column} = $${params.length}`);
+            break;
+          }
 
-        case "less than":
-          where.push(`\`${field}\` < ?`);
-          params.push(f.value);
-          break;
+          case "not equals": {
+            params.push(value);
+            where.push(`${column} != $${params.length}`);
+            break;
+          }
+
+          case "contains": {
+            params.push(`%${value ?? ""}%`);
+            where.push(`${column} ILIKE $${params.length}`);
+            break;
+          }
+
+          case "starts with": {
+            params.push(`${value ?? ""}%`);
+            where.push(`${column} ILIKE $${params.length}`);
+            break;
+          }
+
+          case "ends with": {
+            params.push(`%${value ?? ""}`);
+            where.push(`${column} ILIKE $${params.length}`);
+            break;
+          }
+
+          case "greater than": {
+            params.push(value);
+            where.push(`${column} > $${params.length}`);
+            break;
+          }
+
+          case "less than": {
+            params.push(value);
+            where.push(`${column} < $${params.length}`);
+            break;
+          }
+
+          case "greater than or equal": {
+            params.push(value);
+            where.push(`${column} >= $${params.length}`);
+            break;
+          }
+
+          case "less than or equal": {
+            params.push(value);
+            where.push(`${column} <= $${params.length}`);
+            break;
+          }
+
+          case "blank": {
+            where.push(`(${column} IS NULL OR ${column} = '')`);
+            break;
+          }
+
+          case "not blank": {
+            where.push(`(${column} IS NOT NULL AND ${column} != '')`);
+            break;
+          }
+
+          default:
+            break;
+        }
       }
     }
 
-    const sql = `
+    const whereSQL = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+
+    // =====================================================
+    // SORT
+    // =====================================================
+
+    let orderSQL = "";
+
+    if (Array.isArray(sortModel) && sortModel.length > 0) {
+      const sortParts = [];
+
+      for (const sort of sortModel) {
+        const field = sort?.colId;
+
+        if (!field || !allowedFields.has(field)) {
+          continue;
+        }
+
+        const column = safeIdentifier(field);
+
+        if (!column) {
+          continue;
+        }
+
+        const direction = sort?.sort === "asc" ? "ASC" : "DESC";
+
+        sortParts.push(`${column} ${direction}`);
+      }
+
+      if (sortParts.length > 0) {
+        orderSQL = `ORDER BY ${sortParts.join(", ")}`;
+      }
+    }
+
+    // Default sorting
+    if (!orderSQL) {
+      orderSQL = "ORDER BY 1";
+    }
+
+    // =====================================================
+    // PAGINATION
+    // =====================================================
+
+    const safeStartRow = Math.max(
+      0,
+      Number.isInteger(Number(startRow)) ? Number(startRow) : 0,
+    );
+
+    const requestedLimit = Number(endRow) - Number(startRow);
+
+    const limit = requestedLimit > 0 ? Math.min(requestedLimit, 1000) : 100;
+
+    // =====================================================
+    // DATA QUERY
+    // =====================================================
+
+    const dataParams = [...params];
+
+    dataParams.push(limit);
+    const limitParam = dataParams.length;
+
+    dataParams.push(safeStartRow);
+    const offsetParam = dataParams.length;
+
+    const dataSQL = `
       SELECT *
-      FROM \`${tableName}\`
-      ${where.length ? "WHERE " + where.join(" AND ") : ""}
-      LIMIT 100
+      FROM ${tableName}
+      ${whereSQL}
+      ${orderSQL}
+      LIMIT $${limitParam}
+      OFFSET $${offsetParam}
     `;
 
-    const [rows] = await db.query(sql, params);
+    const { rows } = await db.query(dataSQL, dataParams);
 
-    res.json({ data: rows });
-  } catch (err) {
-    console.error("DATA ERROR:", err);
-    res.status(500).json({ message: "Server error" });
+    // =====================================================
+    // COUNT
+    // =====================================================
+
+    const countSQL = `
+      SELECT COUNT(*)::integer AS total
+      FROM ${tableName}
+      ${whereSQL}
+    `;
+
+    const { rows: countRows } = await db.query(countSQL, params);
+
+    const total = countRows.length > 0 ? Number(countRows[0].total) : 0;
+
+    return res.json({
+      data: rows,
+      rows,
+      total,
+    });
+  } catch (error) {
+    console.error("DATA ERROR:", error);
+
+    return res.status(500).json({
+      message: "Server error",
+    });
   }
 });
 
-/**
- * =========================
- * SAVE CONFIG (FIXED TOTAL 🔥)
- * =========================
- */
+// =========================================================
+// SYNC SCHEMA
+// =========================================================
+
 router.post("/sync-schema", auth, async (req, res) => {
-  const conn = await db.getConnection();
+  const client = await db.connect();
 
   try {
     const { entityId } = req.body;
 
     if (!entityId) {
-      return res.status(400).json({ message: "entityId is required" });
+      return res.status(400).json({
+        message: "entityId is required",
+      });
     }
 
-    // 1. ambil table name
-    const [entityRows] = await conn.query(
-      `SELECT table_name FROM mdf_entities WHERE entity_id = ?`,
+    // =====================================================
+    // GET TABLE NAME
+    // =====================================================
+
+    const { rows: entityRows } = await client.query(
+      `
+        SELECT table_name
+        FROM mdf_entities
+        WHERE entity_id = $1
+        LIMIT 1
+      `,
       [entityId],
     );
 
-    if (!entityRows.length) {
-      return res.status(404).json({ message: "Entity not found" });
+    if (entityRows.length === 0) {
+      return res.status(404).json({
+        message: "Entity not found",
+      });
     }
 
     const tableName = entityRows[0].table_name;
 
-    // 2. ambil schema
-    const [columns] = await conn.query(
+    // =====================================================
+    // GET DATABASE SCHEMA
+    // PostgreSQL
+    // =====================================================
+
+    const { rows: columns } = await client.query(
       `
-      SELECT 
-        COLUMN_NAME,
-        DATA_TYPE,
-        ORDINAL_POSITION
-      FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE()
-        AND TABLE_NAME = ?
-      ORDER BY ORDINAL_POSITION
+        SELECT
+          column_name,
+          data_type,
+          ordinal_position
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = $1
+        ORDER BY ordinal_position
       `,
       [tableName],
     );
 
-    const toLabel = (field) =>
-      field.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    if (columns.length === 0) {
+      return res.status(404).json({
+        message: "Table has no columns",
+      });
+    }
 
-    // 3. CHECKING + INSERT (ANTI DUPLICATE PASTI)
-    for (const col of columns) {
-      const fieldName = col.COLUMN_NAME.trim();
+    // =====================================================
+    // LABEL GENERATOR
+    // =====================================================
 
-      // cek dulu
-      const [exists] = await conn.query(
+    const toLabel = (field) => {
+      return field
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+    };
+
+    await client.query("BEGIN");
+
+    // =====================================================
+    // SYNC COLUMNS
+    // =====================================================
+
+    for (const column of columns) {
+      const fieldName = column.column_name.trim();
+
+      if (!fieldName) {
+        continue;
+      }
+
+      // Check existing field
+      const { rows: existingFields } = await client.query(
         `
-        SELECT 1 
-        FROM mdf_entity_fields
-        WHERE entity_id = ?
-          AND field_name = ?
-        LIMIT 1
-        `,
+            SELECT field_id
+            FROM mdf_entity_fields
+            WHERE entity_id = $1
+              AND field_name = $2
+            LIMIT 1
+          `,
         [entityId, fieldName],
       );
 
-      if (exists.length > 0) {
-        continue; // skip kalau sudah ada
+      if (existingFields.length > 0) {
+        continue;
       }
 
-      // insert kalau belum ada
-      await conn.query(
+      // Insert new field
+      await client.query(
         `
-        INSERT INTO mdf_entity_fields (
-          entity_id,
-          field_name,
-          field_label,
-          data_type,
-          is_visible_default,
-          is_sortable,
-          is_filterable,
-          display_order
-        )
-        VALUES (?, ?, ?, ?, 1, 1, 1, ?)
+          INSERT INTO mdf_entity_fields (
+            entity_id,
+            field_name,
+            field_label,
+            data_type,
+            is_visible_default,
+            is_sortable,
+            is_filterable,
+            display_order
+          )
+          VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            1,
+            1,
+            1,
+            $5
+          )
         `,
         [
           entityId,
           fieldName,
           toLabel(fieldName),
-          col.DATA_TYPE,
-          col.ORDINAL_POSITION,
+          column.data_type,
+          column.ordinal_position,
         ],
       );
     }
 
-    res.json({
+    await client.query("COMMIT");
+
+    return res.json({
+      success: true,
       message: "Schema synced successfully",
       total: columns.length,
     });
-  } catch (err) {
-    console.error("SYNC SCHEMA ERROR:", err);
+  } catch (error) {
+    await client.query("ROLLBACK");
 
-    res.status(500).json({
+    console.error("SYNC SCHEMA ERROR:", error);
+
+    return res.status(500).json({
       message: "Internal server error",
-      error: err.message,
+      error: error instanceof Error ? error.message : "Unknown error",
     });
   } finally {
-    conn.release();
+    client.release();
   }
 });
+
+// =========================================================
+// EXPORT
+// =========================================================
 
 module.exports = router;

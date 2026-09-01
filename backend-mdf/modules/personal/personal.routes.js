@@ -1,5 +1,7 @@
 const express = require("express");
+
 const router = express.Router();
+
 const db = require("../../config/db");
 const auth = require("../../middleware/auth");
 
@@ -7,96 +9,231 @@ const {
   applyFixedFilters,
   applyDefaultFilters,
   applyUserFilters,
+  safeField,
 } = require("../dynamic-table/filterEngine");
 
-// =========================
+// ============================================================
+// HELPERS
+// ============================================================
+
+/**
+ * Validasi identifier database.
+ *
+ * Hanya mengizinkan:
+ * - huruf
+ * - angka
+ * - underscore
+ *
+ * Tidak boleh menerima nama tabel/kolom mentah
+ * dari request tanpa validasi.
+ */
+function sanitizeIdentifier(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const cleaned = value.replace(/[^a-zA-Z0-9_]/g, "");
+
+  return cleaned || null;
+}
+
+/**
+ * Quote PostgreSQL identifier.
+ */
+function quoteIdentifier(value) {
+  const safe = sanitizeIdentifier(value);
+
+  if (!safe) {
+    return null;
+  }
+
+  return `"${safe}"`;
+}
+
+// ============================================================
 // GET DB FILTERS
-// =========================
+// ============================================================
+
 async function getDbFilters(entityId) {
-  const [rows] = await db.query(
-    `SELECT field_name, operator, value, filter_type
-     FROM mdf_entity_filters
-     WHERE entity_id = ?`,
+  const result = await db.query(
+    `
+      SELECT
+        field_name,
+        operator,
+        value,
+        filter_type
+      FROM mdf_entity_filters
+      WHERE entity_id = $1
+        AND is_active = true
+    `,
     [entityId],
   );
 
-  return rows || [];
+  return result.rows;
 }
 
-// =========================
+// ============================================================
 // GET ALLOWED FIELDS
-// =========================
+// ============================================================
+
 async function getAllowedFields(entityId) {
-  const [rows] = await db.query(
-    `SELECT f.field_name
-     FROM mdf_entity_table_columns c
-     JOIN mdf_entity_fields f ON f.field_id = c.field_id
-     WHERE c.entity_id = ?`,
+  const result = await db.query(
+    `
+      SELECT
+        f.field_name
+      FROM mdf_entity_table_columns c
+
+      INNER JOIN mdf_entity_fields f
+        ON f.field_id = c.field_id
+
+      WHERE c.entity_id = $1
+    `,
     [entityId],
   );
 
-  return new Set((rows || []).map((r) => r.field_name));
+  return new Set(result.rows.map((row) => row.field_name));
 }
 
-// =========================
+// ============================================================
+// GET ENTITY TABLE
+// ============================================================
+
+async function getEntityTable(entityId) {
+  const result = await db.query(
+    `
+      SELECT table_name
+      FROM mdf_entities
+      WHERE entity_id = $1
+      LIMIT 1
+    `,
+    [entityId],
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  return sanitizeIdentifier(result.rows[0].table_name);
+}
+
+// ============================================================
 // MAIN DATA API
-// =========================
+// ============================================================
+
+/**
+ * POST /api/personal
+ *
+ * Data API untuk Dynamic Table.
+ */
 router.post("/", auth, async (req, res) => {
-  console.log("PERSONAL API CALLED", req.body);
-
-  const {
-    entityId,
-    startRow = 0,
-    endRow = 100,
-    sortModel = [],
-    filterModel = {},
-  } = req.body;
-
   try {
-    // =========================
-    // TABLE NAME
-    // =========================
-    const [entity] = await db.query(
-      `SELECT table_name FROM mdf_entities WHERE entity_id = ?`,
-      [entityId],
-    );
+    const {
+      entityId,
+      startRow = 0,
+      endRow = 100,
+      sortModel = [],
+      filterModel = {},
+    } = req.body;
 
-    if (!entity.length) {
-      return res.status(404).json({ message: "Entity not found" });
+    // ========================================================
+    // VALIDATION
+    // ========================================================
+
+    if (!entityId) {
+      return res.status(400).json({
+        message: "entityId wajib diisi",
+      });
     }
 
-    const tableName = entity[0].table_name;
+    const parsedStartRow = Number(startRow);
+    const parsedEndRow = Number(endRow);
 
-    // =========================
+    const safeStartRow =
+      Number.isFinite(parsedStartRow) && parsedStartRow >= 0
+        ? Math.floor(parsedStartRow)
+        : 0;
+
+    const safeEndRow =
+      Number.isFinite(parsedEndRow) && parsedEndRow > safeStartRow
+        ? Math.floor(parsedEndRow)
+        : safeStartRow + 100;
+
+    const limit = Math.min(safeEndRow - safeStartRow, 500);
+
+    // ========================================================
+    // TABLE
+    // ========================================================
+
+    const tableName = await getEntityTable(entityId);
+
+    if (!tableName) {
+      return res.status(404).json({
+        message: "Entity not found",
+      });
+    }
+
+    const quotedTableName = quoteIdentifier(tableName);
+
+    if (!quotedTableName) {
+      return res.status(400).json({
+        message: "Invalid table name",
+      });
+    }
+
+    // ========================================================
     // COLUMNS
-    // =========================
-    const [columns] = await db.query(
+    // ========================================================
+
+    const columnsResult = await db.query(
       `
-      SELECT 
-        c.*,
-        f.field_name,
-        f.field_label,
-        f.is_sortable,
-        f.is_filterable
-      FROM mdf_entity_table_columns c
-      JOIN mdf_entity_fields f ON f.field_id = c.field_id
-      WHERE c.entity_id = ?
-      ORDER BY c.display_order ASC
+        SELECT
+          c.*,
+          f.field_name,
+          f.field_label,
+          f.is_sortable,
+          f.is_filterable
+        FROM mdf_entity_table_columns c
+
+        INNER JOIN mdf_entity_fields f
+          ON f.field_id = c.field_id
+
+        WHERE c.entity_id = $1
+
+        ORDER BY c.display_order ASC
       `,
       [entityId],
     );
 
-    const safeColumns = Array.isArray(columns) ? columns : [];
+    const safeColumns = columnsResult.rows;
 
-    const allowed = new Set(safeColumns.map((c) => c.field_name));
+    if (safeColumns.length === 0) {
+      return res.status(200).json({
+        columns: [],
+        rows: [],
+        total: 0,
+        defaultFilters: [],
+      });
+    }
 
-    const columnList = safeColumns.length
-      ? safeColumns.map((c) => `\`${c.field_name}\``).join(",")
-      : "*";
+    // Hanya field yang memang terdaftar
+    // pada entity.
+    const allowed = new Set(safeColumns.map((column) => column.field_name));
 
-    // =========================
+    // ========================================================
+    // SELECT COLUMNS
+    // ========================================================
+
+    const columnList = safeColumns
+      .map((column) => {
+        return quoteIdentifier(column.field_name);
+      })
+      .filter(Boolean)
+      .join(", ");
+
+    // ========================================================
     // FILTER CONFIG
-    // =========================
+    // ========================================================
+
     const dbFilters = await getDbFilters(entityId);
 
     const where = [];
@@ -104,206 +241,126 @@ router.post("/", auth, async (req, res) => {
 
     const userFilterMap = new Set(Object.keys(filterModel || {}));
 
+    // ========================================================
+    // FIXED FILTER
+    // ========================================================
+
     applyFixedFilters(dbFilters, allowed, where, params);
+
+    // ========================================================
+    // DEFAULT FILTER
+    // ========================================================
+
     applyDefaultFilters(dbFilters, allowed, userFilterMap, where, params);
+
+    // ========================================================
+    // USER FILTER
+    // ========================================================
+
     applyUserFilters(filterModel, allowed, where, params);
 
-    const whereSQL = where.length ? "WHERE " + where.join(" AND ") : "";
+    // ========================================================
+    // WHERE
+    // ========================================================
 
-    console.log("WHERE CLAUSE:", whereSQL, params);
+    const whereSQL = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
 
-    // =========================
+    // ========================================================
     // SORT
-    // =========================
+    // ========================================================
+
     let orderSQL = "";
 
-    if (Array.isArray(sortModel) && sortModel.length) {
-      const sort = sortModel
-        .filter((s) => allowed.has(s.colId))
-        .map((s) => `\`${s.colId}\` ${s.sort === "asc" ? "ASC" : "DESC"}`);
+    if (Array.isArray(sortModel) && sortModel.length > 0) {
+      const sortParts = sortModel
+        .filter(
+          (sort) =>
+            sort && typeof sort.colId === "string" && allowed.has(sort.colId),
+        )
+        .map((sort) => {
+          const column = quoteIdentifier(sort.colId);
 
-      if (sort.length) {
-        orderSQL = "ORDER BY " + sort.join(",");
+          const direction = sort.sort === "asc" ? "ASC" : "DESC";
+
+          return `${column} ${direction}`;
+        });
+
+      if (sortParts.length > 0) {
+        orderSQL = `ORDER BY ${sortParts.join(", ")}`;
       }
     }
 
-    // =========================
-    // PAGING
-    // =========================
-    const limit = Math.max(1, endRow - startRow);
+    // Default sort supaya pagination stabil.
+    if (!orderSQL) {
+      orderSQL = "ORDER BY 1";
+    }
 
-    // =========================
+    // ========================================================
+    // PAGINATION PARAMETERS
+    // ========================================================
+
+    const limitPlaceholder = `$${params.length + 1}`;
+
+    const offsetPlaceholder = `$${params.length + 2}`;
+
+    const dataParams = [...params, limit, safeStartRow];
+
+    // ========================================================
     // DATA QUERY
-    // =========================
-    const [rows] = await db.query(
-      `
+    // ========================================================
+
+    const dataSQL = `
       SELECT ${columnList}
-      FROM \`${tableName}\`
+      FROM ${quotedTableName}
       ${whereSQL}
       ${orderSQL}
-      LIMIT ?, ?
-      `,
-      [...params, startRow, limit],
-    );
+      LIMIT ${limitPlaceholder}
+      OFFSET ${offsetPlaceholder}
+    `;
 
-    // =========================
+    console.log("DATA SQL:", dataSQL);
+    console.log("DATA PARAMS:", dataParams);
+
+    const rowsResult = await db.query(dataSQL, dataParams);
+
+    // ========================================================
     // COUNT QUERY
-    // =========================
-    const [count] = await db.query(
-      `
-      SELECT COUNT(*) as total
-      FROM \`${tableName}\`
-      ${whereSQL}
-      `,
-      params,
-    );
+    // ========================================================
 
-    // =========================
+    const countSQL = `
+      SELECT COUNT(*) AS total
+      FROM ${quotedTableName}
+      ${whereSQL}
+    `;
+
+    const countResult = await db.query(countSQL, params);
+
+    const total = Number(countResult.rows[0]?.total || 0);
+
+    // ========================================================
     // RESPONSE
-    // =========================
-    res.json({
+    // ========================================================
+
+    return res.status(200).json({
       columns: safeColumns,
-      rows,
-      total: count?.[0]?.total || 0,
-      defaultFilters: dbFilters.filter((f) => f.filter_type === "default"),
+      rows: rowsResult.rows,
+      total,
+      defaultFilters: dbFilters.filter(
+        (filter) => filter.filter_type === "default",
+      ),
     });
-  } catch (err) {
-    console.error("PERSONAL API ERROR:", err);
-    res.status(500).json({ message: "Query error" });
-  } finally {
-    conn.release();
+  } catch (error) {
+    console.error("PERSONAL API ERROR:", error);
+
+    return res.status(500).json({
+      message: "Query error",
+    });
   }
 });
 
-// =========================
+// ============================================================
 // DISTINCT API
-// =========================
-// router.post("/distinct", auth, async (req, res) => {
-//   try {
-//     const {
-//       entityId,
-//       field,
-//       currentField,
-//       filterModel,
-//       search = {},
-//     } = req.body;
-
-//     if (!field || typeof field !== "string") {
-//       return res.status(400).json({
-//         error: "Invalid field",
-//       });
-//     }
-
-//     // =========================
-//     // SAFE FIELD
-//     // =========================
-//     const safeField = field.replace(/[^a-zA-Z0-9_]/g, "");
-
-//     // =========================
-//     // TABLE
-//     // =========================
-//     const [entity] = await db.query(
-//       `
-//       SELECT table_name
-//       FROM mdf_entities
-//       WHERE entity_id = ?
-//       `,
-//       [entityId],
-//     );
-
-//     const tableName = entity?.[0]?.table_name;
-
-//     if (!tableName) {
-//       return res.status(404).json({
-//         error: "Entity not found",
-//       });
-//     }
-
-//     // =========================
-//     // FILTER CONFIG
-//     // =========================
-//     // Fixed Filter by Entity
-//     const dbFilters = await getDbFilters(entityId);
-//     // Column From entity
-//     const allowed = await getAllowedFields(entityId);
-//     allowed;
-
-//     const where = [];
-//     const params = [];
-
-//     const userFilterMap = new Set(Object.keys(filterModel || {}));
-
-//     // =========================
-//     // FIXED FILTERS
-//     // =========================
-//     applyFixedFilters(dbFilters, allowed, where, params);
-
-//     // =========================
-//     // DEFAULT FILTERS
-//     // IMPORTANT:
-//     // current field default filter
-//     // should NOT restrict distinct list
-//     // =========================
-//     const filteredDefaultFilters = dbFilters.filter((f) => {
-//       if (f.filter_type === "default" && f.field_name === currentField) {
-//         return false;
-//       }
-
-//       return true;
-//     });
-
-//     applyDefaultFilters(
-//       filteredDefaultFilters,
-//       allowed,
-//       userFilterMap,
-//       where,
-//       params,
-//     );
-
-//     // =========================
-//     // USER FILTERS
-//     // IMPORTANT:
-//     // current field already removed
-//     // from FE
-//     // =========================
-//     applyUserFilters(filterModel, allowed, where, params);
-
-//     // =========================
-//     // WHERE SQL
-//     // =========================
-//     const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
-//     // =========================
-//     // DISTINCT QUERY
-//     // =========================
-//     const sql = `
-//       SELECT DISTINCT \`${safeField}\`
-//       FROM \`${tableName}\`
-//       ${whereSQL}
-//       ORDER BY \`${safeField}\` ASC
-//       LIMIT 100
-//     `;
-
-//     console.log("DISTINCT SQL:", sql);
-
-//     const [rows] = await db.query(sql, params);
-
-//     // =========================
-//     // RESPONSE
-//     // =========================
-//     res.json(
-//       rows
-//         .map((r) => r[safeField])
-//         .filter((v) => v !== null && v !== undefined),
-//     );
-//   } catch (err) {
-//     console.error("DISTINCT ERROR:", err);
-
-//     res.status(500).json({
-//       error: "Internal Server Error",
-//     });
-//   }
-// });
+// ============================================================
 
 router.post("/distinct", auth, async (req, res) => {
   try {
@@ -316,9 +373,9 @@ router.post("/distinct", auth, async (req, res) => {
       clearedFilters = [],
     } = req.body;
 
-    // =========================
+    // ======================================================
     // VALIDATE FIELD
-    // =========================
+    // ======================================================
 
     if (!field || typeof field !== "string") {
       return res.status(400).json({
@@ -326,32 +383,19 @@ router.post("/distinct", auth, async (req, res) => {
       });
     }
 
-    // =========================
-    // SAFE FIELD
-    // =========================
+    const cleanField = sanitizeIdentifier(field);
 
-    const safeField = field.replace(/[^a-zA-Z0-9_]/g, "");
-
-    if (!safeField) {
+    if (!cleanField) {
       return res.status(400).json({
         error: "Invalid field",
       });
     }
 
-    // =========================
+    // ======================================================
     // TABLE
-    // =========================
+    // ======================================================
 
-    const [entity] = await db.query(
-      `
-      SELECT table_name
-      FROM mdf_entities
-      WHERE entity_id = ?
-      `,
-      [entityId],
-    );
-
-    const tableName = entity?.[0]?.table_name;
+    const tableName = await getEntityTable(entityId);
 
     if (!tableName) {
       return res.status(404).json({
@@ -359,132 +403,100 @@ router.post("/distinct", auth, async (req, res) => {
       });
     }
 
-    // =========================
-    // FILTER CONFIG
-    // =========================
+    const quotedTableName = quoteIdentifier(tableName);
 
-    // Filter yang disimpan di DB
-    const dbFilters = await getDbFilters(entityId);
+    const quotedField = quoteIdentifier(cleanField);
 
-    // Field yang memang boleh digunakan
+    if (!quotedTableName || !quotedField) {
+      return res.status(400).json({
+        error: "Invalid database identifier",
+      });
+    }
+
+    // ======================================================
+    // ALLOWED FIELDS
+    // ======================================================
+
     const allowed = await getAllowedFields(entityId);
 
-    // =========================
-    // WHERE BUILDER
-    // =========================
+    if (!allowed.has(cleanField)) {
+      return res.status(400).json({
+        error: "Field is not allowed",
+      });
+    }
+
+    // ======================================================
+    // DB FILTERS
+    // ======================================================
+
+    const dbFilters = await getDbFilters(entityId);
 
     const where = [];
     const params = [];
 
-    // Field yang sedang mempunyai user filter
     const userFilterMap = new Set(Object.keys(filterModel || {}));
 
-    // =========================
+    // ======================================================
     // 1. FIXED FILTER
-    // =========================
-    // Fixed filter SELALU diterapkan
-    // dan tidak bisa diubah user.
+    // ======================================================
 
     applyFixedFilters(dbFilters, allowed, where, params);
 
-    // =========================
+    // ======================================================
     // 2. DEFAULT FILTER
-    // =========================
     //
-    // Default filter diterapkan,
-    // tetapi default filter untuk
-    // currentField TIDAK boleh
-    // membatasi distinct list.
-    //
-    // Contoh:
-    //
-    // Default:
-    // status = Active
-    //
-    // User sedang membuka filter:
-    // status
-    //
-    // Maka status = Active
-    // tidak digunakan untuk mencari
-    // distinct status.
-    // =========================
-
-    const filteredDefaultFilters = dbFilters.filter((filter) => {
-      if (
-        filter.filter_type === "default" &&
-        filter.field_name === currentField
-      ) {
-        return false;
-      }
-
-      return true;
-    });
+    // Jangan gunakan default filter
+    // untuk current field.
+    // ======================================================
 
     applyDefaultFilters(
-      filteredDefaultFilters,
+      dbFilters,
       allowed,
       userFilterMap,
       where,
       params,
+      currentField || null,
     );
 
-    // =========================
+    // ======================================================
     // 3. USER FILTER
-    // =========================
     //
-    // filterModel dari AG Grid.
-    //
-    // current field sudah dihapus
-    // oleh FE sebelum request.
-    // =========================
+    // Jangan gunakan filter current field
+    // saat mengambil distinct.
+    // ======================================================
 
-    applyUserFilters(filterModel, allowed, where, params);
+    applyUserFilters(filterModel, allowed, where, params, currentField || null);
 
-    // =========================
-    // 4. SEARCH DISTINCT
-    // =========================
-    //
-    // Search hanya digunakan
-    // untuk mempersempit daftar
-    // distinct value.
-    //
-    // Contoh:
-    //
-    // search = "957436"
-    //
-    // menjadi:
-    //
-    // field LIKE '%957436%'
-    // =========================
+    // ======================================================
+    // 4. SEARCH
+    // ======================================================
 
     if (typeof search === "string" && search.trim()) {
-      where.push(`\`${safeField}\` LIKE ?`);
+      const searchPlaceholder = `$${params.length + 1}`;
+
+      where.push(`${quotedField}::text ILIKE ${searchPlaceholder}`);
 
       params.push(`%${search.trim()}%`);
     }
 
-    // =========================
-    // WHERE SQL
-    // =========================
+    // ======================================================
+    // WHERE
+    // ======================================================
 
-    const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const whereSQL = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
 
-    // =========================
-    // DISTINCT QUERY
-    // =========================
+    // ======================================================
+    // DISTINCT
+    // ======================================================
 
     const sql = `
-      SELECT DISTINCT
-        \`${safeField}\`
-      FROM \`${tableName}\`
-      ${whereSQL}
-      ORDER BY \`${safeField}\` ASC
-      LIMIT 100
-    `;
-
-    // =========================
-    // DEBUG
-    // =========================
+        SELECT DISTINCT
+          ${quotedField} AS value
+        FROM ${quotedTableName}
+        ${whereSQL}
+        ORDER BY value ASC
+        LIMIT 100
+      `;
 
     console.log("DISTINCT REQUEST:", {
       entityId,
@@ -499,23 +511,23 @@ router.post("/distinct", auth, async (req, res) => {
 
     console.log("DISTINCT PARAMS:", params);
 
-    // =========================
+    // ======================================================
     // EXECUTE
-    // =========================
+    // ======================================================
 
-    const [rows] = await db.query(sql, params);
+    const result = await db.query(sql, params);
 
-    // =========================
+    // ======================================================
     // RESPONSE
-    // =========================
+    // ======================================================
 
-    const values = rows
-      .map((row) => row[safeField])
+    const values = result.rows
+      .map((row) => row.value)
       .filter((value) => value !== null && value !== undefined);
 
-    return res.json(values);
-  } catch (err) {
-    console.error("DISTINCT ERROR:", err);
+    return res.status(200).json(values);
+  } catch (error) {
+    console.error("DISTINCT ERROR:", error);
 
     return res.status(500).json({
       error: "Internal Server Error",
@@ -523,71 +535,48 @@ router.post("/distinct", auth, async (req, res) => {
   }
 });
 
-router.get("/:entityId/column_visibility_by_user", auth, async (req, res) => {
-  console.log("PERSONAL API CALLED", req.params.entityId);
-  try {
-    const userId = req.params.entityId;
+// ============================================================
+// COLUMN VISIBILITY BY USER
+// ============================================================
 
-    const [rows] = await db.query(
+router.get("/:entityId/column_visibility_by_user", auth, async (req, res) => {
+  try {
+    const { entityId } = req.params;
+    const userId = req.user.id;
+
+    if (!entityId) {
+      return res.status(400).json({
+        message: "entityId wajib diisi",
+      });
+    }
+
+    const result = await db.query(
       `
-      SELECT DISTINCT
-          mdf_menus.id AS menu_id,
-          mdf_menus.name AS menu_name,
-          mdf_menus.path AS href,
-          mdf_menus.parent_id AS parent_id,
-          mdf_menus.is_system_mode AS is_system_mode,
-          mdf_permissions.action AS permissions
-      FROM
-          mdf_role_permissions
-      JOIN
-          mdf_menus
-          ON mdf_role_permissions.menu_id = mdf_menus.id
-      JOIN
-          mdf_permissions
-          ON mdf_role_permissions.permission_id = mdf_permissions.id
-      JOIN
-          mdf_user_roles
-          ON mdf_role_permissions.role_id = mdf_user_roles.role_id
-      WHERE
-          mdf_user_roles.user_id = ?
-      `,
-      [userId],
+          SELECT
+            field_name,
+            display_name,
+            default_visible,
+            default_order,
+            is_visible,
+            display_order
+          FROM mdf_user_field_settings
+          WHERE entity_id = $1
+            AND user_id = $2
+          ORDER BY display_order ASC
+        `,
+      [entityId, userId],
     );
 
-    const map = new Map();
-
-    for (const row of rows) {
-      if (!map.has(row.menu_id)) {
-        map.set(row.menu_id, {
-          menu_id: row.menu_id,
-          menu_name: row.menu_name,
-          href: row.href,
-          parent_id: row.parent_id,
-          is_system_mode: row.is_system_mode,
-          permissions: [],
-        });
-      }
-
-      const menu = map.get(row.menu_id);
-
-      if (row.permissions && !menu.permissions.includes(row.permissions)) {
-        menu.permissions.push(row.permissions);
-      }
-    }
-
-    const result = [...map.values()];
-
-    if (result.length === 0) {
-      return res.status(403).json({ message: "No access" });
-    }
-
-    res.json({
+    return res.status(200).json({
       message: "Success",
-      data: result,
+      columns: result.rows,
     });
-  } catch (err) {
-    console.error("MENU ERROR:", err);
-    res.status(500).json({ message: "Internal server error" });
+  } catch (error) {
+    console.error("COLUMN VISIBILITY ERROR:", error);
+
+    return res.status(500).json({
+      message: "Failed load visibility setting",
+    });
   }
 });
 
